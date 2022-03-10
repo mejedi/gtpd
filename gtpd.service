@@ -1,0 +1,22 @@
+[Unit]
+Description=Gtpd Service
+After=network.target gtpd.socket
+Requires=gtpd.socket
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/gtpd
+EnvironmentFile=/etc/gtpd.conf
+DynamicUser=yes
+
+; cap_bpf(39): loads BPF programs
+; cap_perfmon(38): required for direct packet access in BPF programs
+;                  (pointer comparison)
+; cap_net_admin: needed to load BPF_PROG_TYPE_XDP
+AmbientCapabilities=cap_net_admin 38 39
+
+; XDP umem counts against the limit
+LimitMEMLOCK=128M
+
+[Install]
+WantedBy=default.target

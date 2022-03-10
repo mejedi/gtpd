@@ -1,0 +1,9 @@
+[Unit]
+Description=Gtpd API Socket
+PartOf=gtpd.service
+
+[Socket]
+ListenStream=/run/gtpd
+
+[Install]
+WantedBy=sockets.target
