@@ -225,15 +225,20 @@ GtpuPipe::GtpuPipe(const GtpuTunnel &tunnel, Fd &net_sock, Fd &xdp_sock,
       encap_state(std::make_unique<EncapState>(xdp_sock_, opts, mmap_offsets)),
       decap_state(std::make_unique<DecapState>(xdp_sock_, opts, mmap_offsets)) {
 
+    // Reserve half a pool for Decap and the rest for Encap (e.g. 10 and 11
+    // for a pool of 21).
+    auto decap_quota = opts.xdp_pool_size / 2;
+    auto encap_quota = opts.xdp_pool_size - decap_quota;
+
+    decap_state->n_pages_free = decap_quota;
+
     // Init fill ring (buffers to be consumed by Rx).
     encap_state->umem_fill.reload();
-    for (int i = 0; i < opts.xdp_pool_size / 2; ++i) {
-        // Note: first xdp_pool_size / 2 pages are for Tx, skip them.
-        encap_state->umem_fill.store(i, xdp_umem.page(opts.xdp_pool_size/2 + i));
+    for (int i = 0; i < encap_quota; ++i) {
+        // Note: first decap_quota pages are for Decap, skip them.
+        encap_state->umem_fill.store(i, xdp_umem.page(decap_quota + i));
     }
-    encap_state->umem_fill.advance(opts.batch_size);
-
-    decap_state->n_pages_free = opts.xdp_pool_size / 2;
+    encap_state->umem_fill.advance(encap_quota);
 
     on_tunnel_updated();
     on_inner_proto_updated();
