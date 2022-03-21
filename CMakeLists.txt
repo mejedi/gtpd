@@ -31,7 +31,12 @@ add_executable(gtpd_ctl
 )
 target_link_libraries(gtpd_ctl gtpd_common)
 
-function(expand_gtpd_bpftrace DEST GTPD_PATH)
-    configure_file(gtpd.bpftrace ${DEST})
-endfunction()
-expand_gtpd_bpftrace(gtpd.bpftrace ${CMAKE_BINARY_DIR}/gtpd)
+# Generate gtpd.bpftrace in the build dir for use with gtpd binary
+# in the build dir.
+add_custom_target(gen_gtpd_bpftrace ALL DEPENDS "gtpd.bpftrace")
+add_custom_command(
+    OUTPUT gtpd.bpftrace DEPENDS gtpd.bpftrace
+    COMMAND sed -e 's|/usr/bin/gtpd|${CMAKE_CURRENT_BINARY_DIR}/gtpd|'
+                "${CMAKE_CURRENT_SOURCE_DIR}/gtpd.bpftrace"
+                > gtpd.bpftrace
+)

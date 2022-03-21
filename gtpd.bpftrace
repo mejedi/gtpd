@@ -1,9 +1,9 @@
 // Trace gtpd statistics updates with bpftrace.
-uprobe:${GTPD_PATH}:gtpd_encap_update {
+uprobe:/usr/bin/gtpd:gtpd_encap_update {
     // TS E cookie encap-ok encap-drop-rx encap-drop-tx
     printf("%ld E %d %ld %ld %ld\n", nsecs, arg0, arg1, arg2, arg3);
 }
-uprobe:${GTPD_PATH}:gtpd_decap_update {
+uprobe:/usr/bin/gtpd:gtpd_decap_update {
     // TS D cookie decap-ok decap-drop-rx decap-drop-tx
     printf("%ld D %d %ld %ld %ld\n", nsecs, arg0, arg1, arg2, arg3);
     // TS d cookie decap-bad decap-trunc
