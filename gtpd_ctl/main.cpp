@@ -17,68 +17,75 @@
 static void print_tunnels(const std::vector<ApiGtpuTunnelListItemMsg> &list);
 static int bpf_set_link_xdp_fd(int ifindex, int fd, uint32_t flags);
 
+struct CmdHandler {
+    ApiClient client;
+
+    CmdHandler(const char *sock_path): client(sock_path) {}
+
+    int operator() (const CreateGtpuTunnelCmd &cmd) {
+        unsigned if_index = if_nametoindex(cmd.if_name);
+        if (!if_index) {
+            throw std::system_error(errno, std::generic_category(),
+                                    std::string("Device '")
+                                    + cmd.if_name + "'");
+        }
+
+        Fd xdp_sock(socket(AF_XDP, SOCK_RAW | SOCK_CLOEXEC, 0));
+        if (!xdp_sock) {
+            throw std::system_error(errno, std::generic_category(),
+                                    "Creating XDP socket");
+        }
+
+        Fd bpf_prog = client.create_gtpu_tunnel(cmd.msg, xdp_sock);
+
+        // Bind xdp_sock to the interface
+        struct sockaddr_xdp addr = {};
+        addr.sxdp_family = AF_XDP;
+        addr.sxdp_ifindex = if_index;
+        addr.sxdp_queue_id = 0;
+        if (bind(xdp_sock.get(), reinterpret_cast<sockaddr *>(&addr),
+                  sizeof(addr)) != 0) {
+            throw std::system_error(errno, std::generic_category(),
+                                    "Bind XDP socket");;
+        }
+
+        // Install xdp_prog
+        int error = bpf_set_link_xdp_fd(if_index, bpf_prog.get(), 0);
+        if (error != 0) {
+            throw std::system_error(-error, std::generic_category(),
+                                    "Install XDP BPF program");;
+        }
+
+        return EXIT_SUCCESS;
+    }
+
+    int operator() (const DeleteGtpuTunnelCmd &cmd) {
+        client.delete_gtpu_tunnel(cmd.msg);
+        return EXIT_SUCCESS;
+    }
+
+    int operator() (const ModifyGtpuTunnelCmd &cmd) {
+        client.modify_gtpu_tunnel(cmd.msg);
+        return EXIT_SUCCESS;
+    }
+
+    int operator() (const ListGtpuTunnelsCmd &cmd) {
+        print_tunnels(client.list_gtpu_tunnels(cmd.msg));
+        return EXIT_SUCCESS;
+    }
+};
+
 int main(int argc, const char *const *argv) {
-    const char *sock_path = getenv("GTPD_SOCKET");
-    if (!sock_path) sock_path = "/run/gtpd";
 
     try {
-        auto [msg, if_name] = parse_args(argv + 1);
+        const char *sock_path = getenv("GTPD_SOCKET");
+        if (!sock_path) sock_path = "/run/gtpd";
 
-        ApiClient client(sock_path);
+        auto cmd = parse_args(argv + 1);
+        CmdHandler handler(sock_path);
 
-        switch (msg.code) {
-        case API_CREATE_GTPU_TUNNEL_CODE:
-            {
-                unsigned if_index = if_nametoindex(if_name);
-                if (!if_index) {
-                    throw std::system_error(errno, std::generic_category(),
-                                            std::string("Device '")
-                                            + if_name + "'");
-                }
+        return std::visit(handler, cmd);
 
-                Fd xdp_sock(socket(AF_XDP, SOCK_RAW | SOCK_CLOEXEC, 0));
-                if (!xdp_sock) {
-                    throw std::system_error(errno, std::generic_category(),
-                                            "Creating XDP socket");
-                }
-
-                Fd bpf_prog = ApiClient(sock_path)
-                    .create_gtpu_tunnel(msg.create_gtpu_tunnel, xdp_sock);
-
-                // Bind xdp_sock to the interface
-                struct sockaddr_xdp addr = {};
-                addr.sxdp_family = AF_XDP;
-                addr.sxdp_ifindex = if_index;
-                addr.sxdp_queue_id = 0;
-                if (bind(xdp_sock.get(), reinterpret_cast<sockaddr *>(&addr),
-                         sizeof(addr)) != 0) {
-                    throw std::system_error(errno, std::generic_category(),
-                                            "Bind XDP socket");;
-                }
-
-                // Install xdp_prog
-                int error = bpf_set_link_xdp_fd(if_index, bpf_prog.get(), 0);
-                if (error != 0) {
-                    throw std::system_error(-error, std::generic_category(),
-                                            "Install XDP BPF program");;
-                }
-
-                return EXIT_SUCCESS;
-            }
-
-        case API_DELETE_GTPU_TUNNEL_CODE:
-            client.delete_gtpu_tunnel(msg.delete_gtpu_tunnel);
-            return EXIT_SUCCESS;
-
-        case API_MODIFY_GTPU_TUNNEL_CODE:
-            client.modify_gtpu_tunnel(msg.modify_gtpu_tunnel);
-            return EXIT_SUCCESS;
-
-        case API_LIST_GTPU_TUNNELS_CODE:
-            print_tunnels(client
-                          .list_gtpu_tunnels(msg.list_gtpu_tunnels));
-            return EXIT_SUCCESS;
-        }
     } catch (const std::exception &e) {
         fprintf(stderr, "%s\n", e.what());
         return EXIT_FAILURE;

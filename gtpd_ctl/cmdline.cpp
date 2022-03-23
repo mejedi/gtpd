@@ -43,7 +43,7 @@ struct CmdLineSeg {
         ++end;
     }
     CmdLineSeg next() const { return CmdLineSeg(end); }
-    void err(std::string_view msg) const {
+    [[noreturn]] void err(std::string_view msg) const {
         std::ostringstream s;
         if (*this) {
             s << '\'';
@@ -167,18 +167,17 @@ private:
 
 // Parses arguments of create session command amd Produces
 // ApiCreateGtpuTunnel message + device name.
-std::pair<ApiCreateGtpuTunnelMsg, const char *>
+CreateGtpuTunnelCmd
 parse_create_gtpu_tunnel_cmd(CmdLineSeg s) {
 
-    ApiCreateGtpuTunnelMsg msg = {};
-    msg.length = sizeof(msg);
-    msg.code = API_CREATE_GTPU_TUNNEL_CODE;
-    msg.inner_proto = htons(ETH_P_IP);
+    CreateGtpuTunnelCmd cmd = {};
+    cmd.msg.length = sizeof(cmd.msg);
+    cmd.msg.code = API_CREATE_GTPU_TUNNEL_CODE;
+    cmd.msg.inner_proto = htons(ETH_P_IP);
 
-    GtpuTunnelParser tun_parser(&msg.tunnel);
-    InnerProtoParser inner_proto_parser(&msg.inner_proto);
+    GtpuTunnelParser tun_parser(&cmd.msg.tunnel);
+    InnerProtoParser inner_proto_parser(&cmd.msg.inner_proto);
 
-    const char *if_name = nullptr;
     bool cookie_set = false;
 
     while (s) {
@@ -186,15 +185,15 @@ parse_create_gtpu_tunnel_cmd(CmdLineSeg s) {
         if (inner_proto_parser.consume(&s)) continue;
         if (s.current() == "dev") {
             s.advance();
-            if (if_name) s.err(err_duplicate_argument);
-            if_name = s.current().data();
+            if (cmd.if_name) s.err(err_duplicate_argument);
+            cmd.if_name = s.current().data();
             s = s.next();
             continue;
         }
         if (s.current() == "cookie") {
             s.advance();
             if (cookie_set) s.err(err_duplicate_argument);
-            msg.cookie = s.parse_u32();
+            cmd.msg.cookie = s.parse_u32();
             s = s.next();
             continue;
         }
@@ -203,20 +202,20 @@ parse_create_gtpu_tunnel_cmd(CmdLineSeg s) {
 
     tun_parser.check_required_fields();
 
-    if (!if_name)
+    if (!cmd.if_name)
         throw std::runtime_error("Device name required, e.g. 'dev foo'");
 
-    return { msg, if_name };
+    return cmd;
 }
 
 // Parses arguments of delete session command.
-ApiDeleteGtpuTunnelMsg parse_delete_gtpu_tunnel_cmd(CmdLineSeg s) {
+DeleteGtpuTunnelCmd parse_delete_gtpu_tunnel_cmd(CmdLineSeg s) {
 
-    ApiDeleteGtpuTunnelMsg msg = {};
-    msg.length = sizeof(msg);
-    msg.code = API_DELETE_GTPU_TUNNEL_CODE;
+    DeleteGtpuTunnelCmd cmd = {};
+    cmd.msg.length = sizeof(cmd.msg);
+    cmd.msg.code = API_DELETE_GTPU_TUNNEL_CODE;
 
-    GtpuTunnelParser key_tun_parser(&msg.tunnel);
+    GtpuTunnelParser key_tun_parser(&cmd.msg.tunnel);
 
     while (s) {
         if (!key_tun_parser.consume(&s)) s.err(err_unexpected_argument);
@@ -224,19 +223,19 @@ ApiDeleteGtpuTunnelMsg parse_delete_gtpu_tunnel_cmd(CmdLineSeg s) {
 
     key_tun_parser.check_required_fields();
 
-    return msg;
+    return cmd;
 }
 
 // Parses arguments of modify session command.
-ApiModifyGtpuTunnelMsg parse_modify_gtpu_tunnel_cmd(CmdLineSeg s) {
+ModifyGtpuTunnelCmd parse_modify_gtpu_tunnel_cmd(CmdLineSeg s) {
 
-    ApiModifyGtpuTunnelMsg msg = {};
-    msg.length = sizeof(msg);
-    msg.code = API_MODIFY_GTPU_TUNNEL_CODE;
+    ModifyGtpuTunnelCmd cmd = {};
+    cmd.msg.length = sizeof(cmd.msg);
+    cmd.msg.code = API_MODIFY_GTPU_TUNNEL_CODE;
 
-    GtpuTunnelParser key_tun_parser(&msg.tunnel);
-    GtpuTunnelParser new_tun_parser(&msg.new_tunnel);
-    InnerProtoParser new_inner_proto_parser(&msg.new_inner_proto);
+    GtpuTunnelParser key_tun_parser(&cmd.msg.tunnel);
+    GtpuTunnelParser new_tun_parser(&cmd.msg.new_tunnel);
+    InnerProtoParser new_inner_proto_parser(&cmd.msg.new_inner_proto);
 
     while (s) {
         if (key_tun_parser.consume(&s)) continue;
@@ -255,63 +254,58 @@ ApiModifyGtpuTunnelMsg parse_modify_gtpu_tunnel_cmd(CmdLineSeg s) {
     if (new_tun_parser.local || new_tun_parser.remote
         || new_tun_parser.local_teid || new_tun_parser.remote_teid) {
 
-        msg.flags |= API_MODIFY_GTPU_TUNNEL_TUNNEL_FLAG;
+        cmd.msg.flags |= API_MODIFY_GTPU_TUNNEL_TUNNEL_FLAG;
 
         if (!new_tun_parser.local_teid)
-            msg.new_tunnel.local_teid = msg.tunnel.local_teid;
+            cmd.msg.new_tunnel.local_teid = cmd.msg.tunnel.local_teid;
 
         if (!new_tun_parser.remote_teid)
-            msg.new_tunnel.remote_teid = msg.tunnel.remote_teid;
+            cmd.msg.new_tunnel.remote_teid = cmd.msg.tunnel.remote_teid;
 
-        uint32_t local_af = msg.new_tunnel.address_family;
-        uint32_t remote_af = msg.new_tunnel.address_family;
+        uint32_t local_af = cmd.msg.new_tunnel.address_family;
+        uint32_t remote_af = cmd.msg.new_tunnel.address_family;
 
         if (!new_tun_parser.local) {
-            msg.new_tunnel.local = msg.tunnel.local;
-            local_af = msg.tunnel.address_family;
+            cmd.msg.new_tunnel.local = cmd.msg.tunnel.local;
+            local_af = cmd.msg.tunnel.address_family;
         }
 
         if (!new_tun_parser.remote) {
-            msg.new_tunnel.remote = msg.tunnel.remote;
-            remote_af = msg.tunnel.address_family;
+            cmd.msg.new_tunnel.remote = cmd.msg.tunnel.remote;
+            remote_af = cmd.msg.tunnel.address_family;
         }
 
         if (local_af != remote_af)
             (new_tun_parser.local ? new_tun_parser.local
             : new_tun_parser.remote).err(err_ip_ipv6_mismatch);
 
-        msg.new_tunnel.address_family = local_af;
+        cmd.msg.new_tunnel.address_family = local_af;
     }
 
     if (new_inner_proto_parser.loc)
-        msg.flags |= API_MODIFY_GTPU_TUNNEL_INNER_PROTO_FLAG;
+        cmd.msg.flags |= API_MODIFY_GTPU_TUNNEL_INNER_PROTO_FLAG;
 
-    return msg;
+    return cmd;
 }
 
 } // namespace
 
-std::pair<ApiMsg, const char*> parse_args(const char * const *argv) {
-    ApiMsg msg = {};
-    const char *if_name = nullptr;
+Cmd parse_args(const char * const *argv) {
     CmdLineSeg s(argv);
     if (s) {
         if (s.current() == "add") {
-            std::tie(msg.create_gtpu_tunnel, if_name)
-                = parse_create_gtpu_tunnel_cmd(s.next());
+            return parse_create_gtpu_tunnel_cmd(s.next());
         } else if (s.current() == "del") {
-            msg.delete_gtpu_tunnel
-                = parse_delete_gtpu_tunnel_cmd(s.next());
+            return parse_delete_gtpu_tunnel_cmd(s.next());
         } else if (s.current() == "mod") {
-            msg.modify_gtpu_tunnel
-                = parse_modify_gtpu_tunnel_cmd(s.next());
+            return parse_modify_gtpu_tunnel_cmd(s.next());
         } else if (s.current() == "ls") {
             if (s.next()) s.next().err(err_unexpected_argument);
-            auto &ls = msg.list_gtpu_tunnels;
-            ls.length = sizeof(ls);
-            ls.code = API_LIST_GTPU_TUNNELS_CODE;
+            ListGtpuTunnelsCmd cmd = {};
+            cmd.msg.length = sizeof(cmd.msg);
+            cmd.msg.code = API_LIST_GTPU_TUNNELS_CODE;
+            return cmd;
         }
     }
-    if (!msg.code) s.err("Expected 'add', 'del', 'mod' or 'ls'");
-    return { msg, if_name };
+    s.err("Expected 'add', 'del', 'mod' or 'ls'");
 }

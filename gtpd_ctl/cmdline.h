@@ -1,6 +1,31 @@
 #pragma once
 #include "gtpd/api.h"
 #include <utility>
+#include <variant>
+
+struct CreateGtpuTunnelCmd {
+    ApiCreateGtpuTunnelMsg msg;
+    const char *if_name;
+};
+
+struct DeleteGtpuTunnelCmd {
+    ApiDeleteGtpuTunnelMsg msg;
+};
+
+struct ModifyGtpuTunnelCmd {
+    ApiModifyGtpuTunnelMsg msg;
+};
+
+struct ListGtpuTunnelsCmd {
+    ApiListGtpuTunnelsMsg msg;
+};
+
+using Cmd = std::variant<
+    CreateGtpuTunnelCmd,
+    DeleteGtpuTunnelCmd,
+    ModifyGtpuTunnelCmd,
+    ListGtpuTunnelsCmd
+>;
 
 // Assumes argv pointer array is nullptr-terminated.
-std::pair<ApiMsg, const char*> parse_args(const char * const *argv);
+Cmd parse_args(const char * const *argv);
