@@ -135,6 +135,6 @@ void ApiClient::verify_response() {
         || reply.length < sizeof(reply.response)
     ) throw std::runtime_error(err_invalid_response);
     if (reply.response.rc != 0)
-        throw std::system_error(reply.response.rc,
+        throw std::system_error(-reply.response.rc,
                                 std::generic_category(), "gtpd");
 }

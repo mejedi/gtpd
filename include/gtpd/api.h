@@ -17,7 +17,7 @@ enum {
 struct ApiResponseMsg {
     API_MSG_FIELDS (API_RESPONSE_CODE)
 
-    int rc;
+    int32_t rc; // -errno on failure
 };
 
 struct ApiAddr {

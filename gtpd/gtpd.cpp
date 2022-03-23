@@ -303,12 +303,12 @@ void Gtpd::api_client_serve(ApiClient *client) {
     try {
         switch (client->inmsg.code) {
         default:
-            resp.rc = EINVAL;
+            resp.rc = -EINVAL;
             break;
         case API_CREATE_GTPU_TUNNEL_CODE: {
                 auto &msg = client->inmsg.create_gtpu_tunnel;
                 if (client->inmsg.length != sizeof(msg)) {
-                    resp.rc = EINVAL; break;
+                    resp.rc = -EINVAL; break;
                 }
                 client->outmsg_fd
                     = core.create_gtpu_tunnel(msg, std::move(client->inmsg_fd));
@@ -317,7 +317,7 @@ void Gtpd::api_client_serve(ApiClient *client) {
         case API_DELETE_GTPU_TUNNEL_CODE: {
                 auto &msg = client->inmsg.delete_gtpu_tunnel;
                 if (client->inmsg.length != sizeof(msg)) {
-                    resp.rc = EINVAL; break;
+                    resp.rc = -EINVAL; break;
                 }
                 core.delete_gtpu_tunnel(msg);
             }
@@ -325,7 +325,7 @@ void Gtpd::api_client_serve(ApiClient *client) {
         case API_MODIFY_GTPU_TUNNEL_CODE: {
                 auto &msg = client->inmsg.modify_gtpu_tunnel;
                 if (client->inmsg.length != sizeof(msg)) {
-                    resp.rc = EINVAL; break;
+                    resp.rc = -EINVAL; break;
                 }
                 core.modify_gtpu_tunnel(msg);
             }
@@ -333,16 +333,16 @@ void Gtpd::api_client_serve(ApiClient *client) {
         case API_LIST_GTPU_TUNNELS_CODE:
             auto &msg = client->inmsg.list_gtpu_tunnels;
             if (client->inmsg.length != sizeof(msg)) {
-                resp.rc = EINVAL; break;
+                resp.rc = -EINVAL; break;
             }
             auto sess = core.list_gtpu_tunnels_next(msg, nullptr);
             if (sess) client->outmsg.gtpu_tunnel_list_item = *sess;
             break;
         }
     } catch (const std::bad_alloc &) {
-        resp.rc = ENOMEM;
+        resp.rc = -ENOMEM;
     } catch (const std::system_error &e) {
-        resp.rc = e.code().value();
+        resp.rc = -e.code().value();
     }
 }
 
