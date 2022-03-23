@@ -50,9 +50,11 @@ struct GtpdCore::Session {
     explicit Session(const GtpuTunnel &tun, Fd net_sock, Fd xdp_sock,
                      GtpuPipe::InnerProto inner_proto,
                      GtpuPipe::Cookie cookie,
-                     const GtpdCore::Options &opts):
+                     const GtpdCore::Options &opts,
+                     GtpuPipe::BpfState bpf_state):
         net_sock_reg(net_sock),
-        pipe(tun, std::move(net_sock), std::move(xdp_sock), inner_proto, cookie, opts) {}
+        pipe(tun, std::move(net_sock), std::move(xdp_sock), inner_proto, cookie, opts,
+             std::move(bpf_state)) {}
 
     Watcher net_sock_watcher() const;
     Watcher xdp_sock_watcher() const;
@@ -64,14 +66,16 @@ Fd GtpdCore::create_gtpu_tunnel(const ApiCreateGtpuTunnelMsg &msg,
     const AF address_family = tunnel.address_family();
     ensure_address_family_enabled(address_family);
 
+    GtpuPipe::BpfState bpf_state;
+    Fd xdp_bpf_prog = GtpuPipe::xdp_bpf_prog(xdp_sock, bpf_state);
+
     auto p = std::make_unique<Session>(tunnel,
                                        gtpu_socket(address_family),
                                        std::move(xdp_sock),
                                        GtpuPipe::InnerProto(msg.inner_proto),
                                        GtpuPipe::Cookie(msg.cookie),
-                                       options);
-
-    Fd xdp_bpf_prog = p->pipe.xdp_bpf_prog();
+                                       options,
+                                       std::move(bpf_state));
 
     auto key = p->pipe.tunnel().key();
     auto [it, inserted] = sessions.insert(std::make_pair(key, decltype(p)()));

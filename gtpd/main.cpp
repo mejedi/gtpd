@@ -95,8 +95,6 @@ int main(int argc, char **argv, char **envp) {
             opts.xdp_pool_size = std::max(2, ival);
         else if (key == "GTPD_TUN_DISPATCHER_INITIAL_CAPACITY")
             GtpuTunnelDispatcher::initial_capacity = std::max(2, ival);
-        else if (key == "GTPD_NO_MMAPABLE_BPF_MAPS")
-            GtpuPipe::no_mmapable_bpf_maps.store(ival);
         else {
             fprintf(stderr, "fatal: unknown option: %.*s\n", int(key.size()), key.data());
             return EXIT_FAILURE;
@@ -111,7 +109,13 @@ int main(int argc, char **argv, char **envp) {
     sigprocmask(SIG_BLOCK, &opts.stop_sig, nullptr);
 
     try {
-        Gtpd(opts).run();
+        Gtpd gtpd(opts);
+
+        // dry run: ensure that XDP program loads successfully
+        GtpuPipe::check_xdp_bpf_prog_can_load();
+
+        gtpd.run();
+
     } catch (const std::exception &e) {
         fprintf(stderr, "fatal: %s\n", e.what());
         return EXIT_FAILURE;

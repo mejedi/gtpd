@@ -23,9 +23,31 @@ struct GtpuPipe {
 
     enum class Cookie: uint32_t {};
 
+private:
+    struct EncapState;
+
+public:
+    class BpfState {
+        friend struct GtpuPipe;
+        friend struct EncapState;
+        Fd fd;
+    public:
+        BpfState();
+    };
+
+    // XDP socket requires a BPF program to be installed in a network
+    // interface to receive ingress traffic.  Produce such a program.
+    static Fd xdp_bpf_prog(const Fd &xdp_sock, const BpfState &state);
+
+    // dry run: ensure that XDP program loads successfully
+    static void check_xdp_bpf_prog_can_load() {
+        xdp_bpf_prog(Fd(), BpfState());
+    }
+
     GtpuPipe(const GtpuTunnel &tunnel, Fd net_sock, Fd xdp_sock,
              InnerProto inner_proto, Cookie cookie,
-             const Options &opts);
+             const Options &opts,
+             BpfState bpf_state);
 
     ~GtpuPipe();
 
@@ -50,10 +72,6 @@ struct GtpuPipe {
 
     int do_decap();
 
-    // XDP socket requires a BPF program to be installed in a network
-    // interface to receive ingress traffic.  Produce such a program.
-    Fd xdp_bpf_prog() const;
-
     // Used to identify tunnels in uprobes.
     Cookie cookie() const { return cookie_; }
 
@@ -67,8 +85,6 @@ struct GtpuPipe {
     uint64_t decap_drop_tx() const;
     uint64_t decap_bad() const;
     uint64_t decap_trunc() const;
-
-    static std::atomic_bool no_mmapable_bpf_maps;
 
 private:
     struct EncapState;
@@ -89,7 +105,8 @@ private:
     GtpuPipe(const GtpuTunnel &tunnel, Fd &net_sock, Fd &xdp_sock,
              InnerProto inner_proto, Cookie cookie,
              const Options &opts,
-             xdp_mmap_offsets mmap_ofsets);
+             xdp_mmap_offsets mmap_ofsets,
+             BpfState bpf_state);
 
     void on_tunnel_updated();
     void on_inner_proto_updated();

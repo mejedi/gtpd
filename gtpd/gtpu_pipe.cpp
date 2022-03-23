@@ -47,10 +47,15 @@ const size_t CacheLineAligned::cache_line_size = sysconf(_SC_LEVEL1_DCACHE_LINES
 #define BPF_F_MMAPABLE (1U << 10)
 #endif
 
-struct BpfEncapState {
+struct BpfStateData {
     volatile uint16_t inner_proto;
     volatile uint64_t rx;
 };
+
+GtpuPipe::BpfState::BpfState(): fd(bpf_create_map(
+    BPF_MAP_TYPE_ARRAY, sizeof(uint32_t), sizeof(BpfStateData), 1,
+    BPF_F_MMAPABLE
+)) {}
 
 // EncapState hosts bits related to encapsulation (XDP->NET).
 // As encap and decap could happen concurrently, ensure that EncapState
@@ -65,15 +70,15 @@ struct GtpuPipe::EncapState: CacheLineAligned {
     std::vector<GtpuHeader> gtpu; // batch_size
     GtpuTunnel::MsgMetaStorage msg_meta;
 
-    Fd bpf_state_map;
-    BpfEncapState *bpf_state = nullptr;
+    BpfStateData *bpf_state = nullptr;
 
     // Counters
     volatile uint64_t ok = 0, drop_rx = 0, drop_tx = 0;
 
     EncapState(const Fd &xdp,
                const Options &opts,
-               const xdp_mmap_offsets &mmap_offsets)
+               const xdp_mmap_offsets &mmap_offsets,
+               BpfState bpf_state)
         : rx(xdp, opts.xdp_pool_size / 2, mmap_offsets),
           umem_fill(xdp, opts.xdp_pool_size, mmap_offsets),
       // Why UmemFill (and Tx) ring is 2x the size?
@@ -99,42 +104,19 @@ struct GtpuPipe::EncapState: CacheLineAligned {
             gtpu[i].type = GTPU_TYPE_GPDU;
         }
 
-        if (GtpuPipe::no_mmapable_bpf_maps.load(std::memory_order_relaxed)) {
-create_no_mmapable:
-            bpf_state_map = bpf_create_map(
-                BPF_MAP_TYPE_ARRAY, sizeof(uint32_t), sizeof(BpfEncapState), 1,
-                0
-            );
-            return;
-        }
-
-        try {
-            bpf_state_map = bpf_create_map(
-                BPF_MAP_TYPE_ARRAY, sizeof(uint32_t), sizeof(BpfEncapState), 1,
-                BPF_F_MMAPABLE
-            );
-        } catch (const std::system_error &err) {
-            if (err.code().value() != EINVAL) throw;
-            bool f = false;
-            if (std::atomic_compare_exchange_strong(&GtpuPipe::no_mmapable_bpf_maps, &f, true)) {
-                fputs("warning: mmapable BPF maps not supported\n", stderr);
-            }
-            goto create_no_mmapable;
-        }
-
         auto *p = mmap(
-            nullptr, sizeof(BpfEncapState),
-            PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, bpf_state_map.get(), 0
+            nullptr, sizeof(BpfStateData),
+            PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, bpf_state.fd.get(), 0
         );
         if (p == MAP_FAILED) {
             throw std::system_error(errno, std::generic_category(), "mmap bpf map");
         }
 
-        bpf_state = static_cast<BpfEncapState *>(p);
+        this->bpf_state = static_cast<BpfStateData *>(p);
     }
 
     ~EncapState() {
-        if (bpf_state) munmap(bpf_state, sizeof(BpfEncapState));
+        munmap(bpf_state, sizeof(BpfStateData));
     }
 };
 
@@ -208,21 +190,25 @@ struct GtpuPipe::DecapState: CacheLineAligned {
 
 GtpuPipe::GtpuPipe(const GtpuTunnel &tunnel, Fd net_sock, Fd xdp_sock,
                    InnerProto inner_proto, Cookie cookie,
-                   const Options &opts)
+                   const Options &opts,
+                   BpfState bpf_state)
     : GtpuPipe(tunnel, net_sock, xdp_sock, inner_proto, cookie, opts,
-               XdpRing::mmap_offsets(xdp_sock)) {}
+               XdpRing::mmap_offsets(xdp_sock),
+               std::move(bpf_state)) {}
 
 GtpuPipe::GtpuPipe(const GtpuTunnel &tunnel, Fd &net_sock, Fd &xdp_sock,
                    InnerProto inner_proto, Cookie cookie,
                    const Options &opts,
-                   xdp_mmap_offsets mmap_offsets)
+                   xdp_mmap_offsets mmap_offsets,
+                   BpfState bpf_state)
     : tunnel_(tunnel),
       xdp_sock_(std::move(xdp_sock)),
       inner_proto_(inner_proto),
       cookie_(cookie),
       batch_size(opts.batch_size),
       xdp_umem(xdp_sock_, opts.xdp_pool_size, opts.encap_mtu),
-      encap_state(std::make_unique<EncapState>(xdp_sock_, opts, mmap_offsets)),
+      encap_state(std::make_unique<EncapState>(xdp_sock_, opts, mmap_offsets,
+                  std::move(bpf_state))),
       decap_state(std::make_unique<DecapState>(xdp_sock_, opts, mmap_offsets)) {
 
     // Reserve half a pool for Decap and the rest for Encap (e.g. 10 and 11
@@ -470,23 +456,17 @@ void GtpuPipe::on_tunnel_updated() {
 }
 
 void GtpuPipe::on_inner_proto_updated() {
-    if (encap_state->bpf_state) {
-        encap_state->bpf_state->inner_proto = uint16_t(inner_proto_);
-    } else {
-        // This will reset BPF Rx couner as a side effect.  We don't care as
-        // the dependent logic is disabled if mmap for BPF map is not supported.
-        int ind0 = 0;
-        BpfEncapState s = { uint16_t(inner_proto_) };
-        bpf_update_elem(encap_state->bpf_state_map, &ind0, &s, BPF_ANY);
-    }
+    encap_state->bpf_state->inner_proto = uint16_t(inner_proto_);
 }
 
-Fd GtpuPipe::xdp_bpf_prog() const {
+Fd GtpuPipe::xdp_bpf_prog(const Fd &xdp_sock, const BpfState &state) {
     Fd xsk_map = bpf_create_map(
-        BPF_MAP_TYPE_XSKMAP, sizeof(int), sizeof(int), 1, 0, Fd()
+        BPF_MAP_TYPE_XSKMAP, sizeof(int), sizeof(int), 1, 0
     );
-    int ind_0 = 0, fd = xdp_sock_.get();
-    bpf_update_elem(xsk_map, &ind_0, &fd, BPF_NOEXIST);
+    if (xdp_sock) { // check_xdp_bpf_prog_can_load doesn't pass a valid xdp_sock
+        int ind_0 = 0, fd = xdp_sock.get();
+        bpf_update_elem(xsk_map, &ind_0, &fd, BPF_NOEXIST);
+    }
 
     enum { L_Drop, LabelCount };
     int labels[LabelCount];
@@ -505,7 +485,7 @@ Fd GtpuPipe::xdp_bpf_prog() const {
         BPF_JMP_REG(BPF_JGT, BPF_REG_3, BPF_REG_2, L_Drop),
 
         //// Get bpf encap state pointer (r0).
-        BPF_LD_MAP_FD(BPF_REG_ARG1, encap_state->bpf_state_map.get()),
+        BPF_LD_MAP_FD(BPF_REG_ARG1, state.fd.get()),
         BPF_MOV64_REG(BPF_REG_ARG2, BPF_REG_FP),
         BPF_MOV32_IMM(BPF_REG_3, 0),
         BPF_ALU64_IMM(BPF_ADD, BPF_REG_ARG2, -4),
@@ -515,13 +495,13 @@ Fd GtpuPipe::xdp_bpf_prog() const {
 
         //// Load h_proto (uint16_t) from ETH header and validate.
         BPF_LDX_MEM(BPF_H, BPF_REG_1, BPF_REG_6, offsetof(ethhdr, h_proto)),
-        BPF_LDX_MEM(BPF_H, BPF_REG_2, BPF_REG_0, offsetof(BpfEncapState, inner_proto)),
+        BPF_LDX_MEM(BPF_H, BPF_REG_2, BPF_REG_0, offsetof(BpfStateData, inner_proto)),
         BPF_JMP_REG(BPF_JNE, BPF_REG_1, BPF_REG_2, L_Drop),
 
         //// Bump Rx counter (bpf encap state).
-        BPF_LDX_MEM(BPF_DW, BPF_REG_1, BPF_REG_0, offsetof(BpfEncapState, rx)),
+        BPF_LDX_MEM(BPF_DW, BPF_REG_1, BPF_REG_0, offsetof(BpfStateData, rx)),
         BPF_ALU64_IMM(BPF_ADD, BPF_REG_1, 1),
-        BPF_STX_MEM(BPF_DW, BPF_REG_0, BPF_REG_1, offsetof(BpfEncapState, rx)),
+        BPF_STX_MEM(BPF_DW, BPF_REG_0, BPF_REG_1, offsetof(BpfStateData, rx)),
 
         //// Store Rx value in the packet (partially clobbering ETH header).
         BPF_STX_MEM(BPF_DW, BPF_REG_6, BPF_REG_1, 0),
@@ -546,8 +526,6 @@ BPF_LABEL(L_Drop),
     );
 }
 
-std::atomic_bool GtpuPipe::no_mmapable_bpf_maps = false;
-
 #ifndef NDEBUG
 int GtpuPipe::trap_on_halt = 0;
 #endif
@@ -556,15 +534,7 @@ uint64_t GtpuPipe::encap_ok() const {
     return encap_state->ok;
 }
 uint64_t GtpuPipe::encap_drop_rx() const {
-    if (encap_state->bpf_state)
-        return encap_state->drop_rx;
-    xdp_statistics stat;
-    socklen_t len = sizeof(stat);
-    if (getsockopt(xdp_sock_.get(), SOL_XDP, XDP_STATISTICS,
-                   &stat, &len) == 0) {
-        return stat.rx_dropped;
-    }
-    return 0;
+    return encap_state->drop_rx;
 }
 uint64_t GtpuPipe::encap_drop_tx() const {
     return encap_state->drop_tx;
