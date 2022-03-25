@@ -50,7 +50,7 @@ struct ApiCreateGtpuTunnelMsg {
 struct ApiDeleteGtpuTunnelMsg {
     API_MSG_FIELDS (API_DELETE_GTPU_TUNNEL_CODE)
 
-    ApiGtpuTunnel tunnel;
+    uint32_t id;
 };
 // Response: ApiResponseMsg
 
@@ -58,7 +58,7 @@ struct ApiDeleteGtpuTunnelMsg {
 struct ApiModifyGtpuTunnelMsg {
     API_MSG_FIELDS (API_MODIFY_GTPU_TUNNEL_CODE)
 
-    ApiGtpuTunnel tunnel;
+    uint32_t id;
     uint32_t flags;
     ApiGtpuTunnel new_tunnel;
     uint32_t new_inner_proto;
@@ -81,6 +81,8 @@ struct ApiListGtpuTunnelsMsg {
 
 struct ApiGtpuTunnelListItemMsg {
     API_MSG_FIELDS (API_GTPU_TUNNEL_LIST_ITEM_CODE)
+
+    uint32_t id;
 
     ApiGtpuTunnel tunnel;
 

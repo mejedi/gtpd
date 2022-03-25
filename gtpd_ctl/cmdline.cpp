@@ -12,6 +12,7 @@ namespace {
 static const char err_ip_ipv6_mismatch[] = "IP/IPv6 mismatch";
 static const char err_duplicate_argument[] = "Duplicate argument";
 static const char err_unexpected_argument[] = "Unexpected argument";
+static const char err_id_required[] = "id required";
 
 // CmdLineSegment tracks the current argument in the command line.
 // Additionally, it tracks position of the "statement start", e.g.
@@ -215,13 +216,16 @@ DeleteGtpuTunnelCmd parse_delete_gtpu_tunnel_cmd(CmdLineSeg s) {
     cmd.msg.length = sizeof(cmd.msg);
     cmd.msg.code = API_DELETE_GTPU_TUNNEL_CODE;
 
-    GtpuTunnelParser key_tun_parser(&cmd.msg.tunnel);
+    bool id_set = false;
 
     while (s) {
-        if (!key_tun_parser.consume(&s)) s.err(err_unexpected_argument);
+        cmd.msg.id = s.parse_u32();
+        if (id_set) s.err(err_duplicate_argument);
+        id_set = true;
+        s = s.next();
     }
 
-    key_tun_parser.check_required_fields();
+    if (!id_set) throw std::runtime_error(err_id_required);
 
     return cmd;
 }
@@ -233,23 +237,26 @@ ModifyGtpuTunnelCmd parse_modify_gtpu_tunnel_cmd(CmdLineSeg s) {
     cmd.msg.length = sizeof(cmd.msg);
     cmd.msg.code = API_MODIFY_GTPU_TUNNEL_CODE;
 
-    GtpuTunnelParser key_tun_parser(&cmd.msg.tunnel);
+    bool id_set = false;
     GtpuTunnelParser new_tun_parser(&cmd.msg.new_tunnel);
     InnerProtoParser new_inner_proto_parser(&cmd.msg.new_inner_proto);
 
     while (s) {
-        if (key_tun_parser.consume(&s)) continue;
         if (s.current() == "set") {
             s.advance();
             if (!new_tun_parser.consume(&s)
                 && !new_inner_proto_parser.consume(&s)
             ) s.err(err_unexpected_argument);
             continue;
+        } else {
+            cmd.msg.id = s.parse_u32();
+            if (id_set) s.err(err_duplicate_argument);
+            id_set = true;
+            s = s.next();
         }
-        s.err(err_unexpected_argument);
     }
 
-    key_tun_parser.check_required_fields();
+    if (!id_set) throw std::runtime_error(err_id_required);
 
     if (new_tun_parser.local)
         cmd.msg.flags |= API_MODIFY_GTPU_TUNNEL_LOCAL_FLAG;

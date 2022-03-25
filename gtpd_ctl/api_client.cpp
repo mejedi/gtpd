@@ -13,12 +13,12 @@ ApiClient::ApiClient(std::string_view path): sock(connect(path)) {
                                 + path.data() + "'");
 }
 
-Fd ApiClient::create_gtpu_tunnel(const ApiCreateGtpuTunnelMsg &msg,
+std::pair<uint32_t, Fd>
+ApiClient::create_gtpu_tunnel(const ApiCreateGtpuTunnelMsg &msg,
                                  const Fd &xdp_sock) {
     send_request(&msg, msg.length, xdp_sock);
     Fd bpf_prog = receive_reply();
-    verify_response();
-    return bpf_prog;
+    return { verify_response(), std::move(bpf_prog) };
 }
 
 void ApiClient::delete_gtpu_tunnel(const ApiDeleteGtpuTunnelMsg &msg) {
@@ -47,16 +47,6 @@ ApiClient::list_gtpu_tunnels(const ApiListGtpuTunnelsMsg &msg) {
         }
         res.push_back(reply.gtpu_tunnel_list_item);
     }
-    // Sort as binary strings
-    std::sort(res.begin(), res.end(), [] (const ApiGtpuTunnelListItemMsg &l,
-                                          const ApiGtpuTunnelListItemMsg &r
-                                         ) -> bool const {
-        using U8StringView = std::basic_string_view<uint8_t>;
-        return U8StringView(reinterpret_cast<const uint8_t *>(&l),
-                            sizeof(l))
-                < U8StringView(reinterpret_cast<const uint8_t *>(&r),
-                                sizeof(r));
-    });
     return res;
 }
 

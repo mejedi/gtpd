@@ -1,8 +1,7 @@
 // gtpd_ctl add local 1.1.1.1 local-teid 1234 remote 2.2.2.2 remote-teid 1234
 //          dev veth-tun type ip
-// gtpd_ctl del local 1.1.1.1 local-teid 1234 remote 2.2.2.2 remote-teid 1234
-// gtpd_ctl mod local 1.1.1.1 local-teid 1234 remote 2.2.2.2 remote-teid 1234
-//          set local-teid 42 set type ipv6
+// gtpd_ctl del 1
+// gtpd_ctl mod 1 set local-teid 42 set type ipv6
 // gtpd_ctl ls
 
 #include "api_client.h"
@@ -36,7 +35,7 @@ struct CmdHandler {
                                     "Creating XDP socket");
         }
 
-        Fd bpf_prog = client.create_gtpu_tunnel(cmd.msg, xdp_sock);
+        auto [id, bpf_prog] = client.create_gtpu_tunnel(cmd.msg, xdp_sock);
 
         // Bind xdp_sock to the interface
         struct sockaddr_xdp addr = {};
@@ -56,6 +55,7 @@ struct CmdHandler {
                                     "Install XDP BPF program");;
         }
 
+        printf("%d\n", id);
         return EXIT_SUCCESS;
     }
 
@@ -95,6 +95,7 @@ int main(int argc, const char *const *argv) {
 union Columns {
     int width[0];
     struct {
+        int id;
         int local;
         int local_teid;
         int remote;
@@ -117,7 +118,8 @@ static int fmt_header(std::vector<char> &buf, const Columns &cols) {
     return snprintf(
         &buf[0], buf.size(),
         "%*s  %*s  %*s  %*s  %*s  %*s  %*s  %*s  %*s  %*s  %*s  %*s  "
-        "%*s  %*s  %*s\n",
+        "%*s  %*s  %*s  %*s\n",
+        cols.id, "id",
         cols.local, "local",
         cols.local_teid, "local-teid",
         cols.remote, "remote",
@@ -137,7 +139,7 @@ static int fmt_header(std::vector<char> &buf, const Columns &cols) {
 }
 
 static int fmt_row(std::vector<char> &buf, const ApiGtpuTunnelListItemMsg &sess,
-                    const Columns &cols) {
+                   const Columns &cols) {
 
     char local[INET6_ADDRSTRLEN], remote[INET6_ADDRSTRLEN];
 
@@ -157,8 +159,9 @@ static int fmt_row(std::vector<char> &buf, const ApiGtpuTunnelListItemMsg &sess,
 
     return snprintf(
         &buf[0], buf.size(),
-        "%*s  %*u  %*s  %*u  %*s  %*d  %*u  %*lu  %*lu  %*lu  %*lu  "
+        "%*u  %*s  %*u  %*s  %*u  %*s  %*d  %*u  %*lu  %*lu  %*lu  %*lu  "
         "%*lu  %*lu  %*lu  %*lu\n",
+        cols.id, sess.id,
         cols.local, inet_ntop(
             sess.tunnel.address_family,
             &sess.tunnel.local,
@@ -203,7 +206,7 @@ static void update_cols(const std::vector<char> &buf, int rc, Columns &cols) {
 
 static void print_tunnels(const std::vector<ApiGtpuTunnelListItemMsg> &list) {
     std::vector<char> buf(256);
-    Columns cols = {}; cols.local = strlen("# local");
+    Columns cols = {}; cols.id = strlen("# id");
     int rc;
     for (int i = 0; i < 2; ++i) {
         while ((rc = fmt_header(buf, cols)) > 0 && size_t(rc) > buf.size()) {

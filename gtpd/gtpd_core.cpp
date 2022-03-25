@@ -193,13 +193,6 @@ void GtpdCore::modify_session_socket_and_bpf_maps(Session &sess, const GtpuTunne
     }
 }
 
-GtpuTunnelId GtpdCore::lookup_tunnel_fixme(const GtpuTunnel &tunnel) {
-    for (int i = 1; i < sessions.size(); ++i)
-        if (sessions[i] && sessions[i]->pipe.tunnel() == tunnel)
-            return GtpuTunnelId(i);
-    return GtpuTunnelId(0);
-}
-
 GtpuTunnelId GtpdCore::next_tunnel(GtpuTunnelId id) {
     for (auto index = uint32_t(id); ++index != sessions.size(); )
         if (sessions[index]) return GtpuTunnelId(index);

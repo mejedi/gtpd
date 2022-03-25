@@ -27,8 +27,6 @@ public:
     const GtpuPipe &gtpu_pipe(GtpuTunnelId);
     int halt_code(GtpuTunnelId);
 
-    GtpuTunnelId lookup_tunnel_fixme(const GtpuTunnel &);
-
     struct Options: GtpuPipe::Options {
         // int encap_mtu
         // int batch_size

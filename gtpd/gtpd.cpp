@@ -304,6 +304,7 @@ static void encode_next_tunnel(GtpdCore &core, GtpuTunnelId id, ApiMsg *dest) {
         auto &list_item = dest->gtpu_tunnel_list_item;
         list_item.length = sizeof(list_item);
         list_item.code = API_GTPU_TUNNEL_LIST_ITEM_CODE;
+        list_item.id = uint32_t(id);
 
         auto const &pipe = core.gtpu_pipe(id);
         list_item.tunnel = pipe.tunnel().api_gtpu_tunnel();
@@ -352,7 +353,7 @@ void Gtpd::api_client_serve(ApiClient *client) {
                     resp.rc = -EINVAL;
                     break;
                 }
-                core.delete_tunnel(core.lookup_tunnel_fixme(GtpuTunnel(msg.tunnel)));
+                core.delete_tunnel(GtpuTunnelId(msg.id));
                 resp.rc = 0;
             }
             break;
@@ -362,8 +363,7 @@ void Gtpd::api_client_serve(ApiClient *client) {
                     resp.rc = -EINVAL;
                     break;
                 }
-                auto id = core.lookup_tunnel_fixme(GtpuTunnel(msg.tunnel));
-                auto &pipe = core.gtpu_pipe(id);
+                auto &pipe = core.gtpu_pipe(GtpuTunnelId(msg.id));
 
                 ApiGtpuTunnel tunnel = pipe.tunnel().api_gtpu_tunnel();
                 static constexpr auto lar_mask =
@@ -393,7 +393,7 @@ void Gtpd::api_client_serve(ApiClient *client) {
                     inner_proto = InnerProto(msg.new_inner_proto);
                 }
 
-                core.modify_tunnel(id, GtpuTunnel(tunnel), inner_proto);
+                core.modify_tunnel(GtpuTunnelId(msg.id), GtpuTunnel(tunnel), inner_proto);
                 resp.rc = 0;
             }
             break;
@@ -418,7 +418,7 @@ bool Gtpd::api_client_serve_cont(ApiClient *client) {
     if (client->inmsg.code == API_LIST_GTPU_TUNNELS_CODE &&
         client->outmsg.code == API_GTPU_TUNNEL_LIST_ITEM_CODE) {
 
-        auto id = core.lookup_tunnel_fixme(GtpuTunnel(client->outmsg.gtpu_tunnel_list_item.tunnel));
+        auto id = GtpuTunnelId(client->outmsg.gtpu_tunnel_list_item.id);
         encode_next_tunnel(core, id, &client->outmsg);
         return true;
     }
