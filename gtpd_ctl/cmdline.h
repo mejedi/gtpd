@@ -6,6 +6,7 @@
 struct CreateGtpuTunnelCmd {
     ApiCreateGtpuTunnelMsg msg;
     const char *if_name;
+    int session_leader_pid = -1;
 };
 
 struct DeleteGtpuTunnelCmd {

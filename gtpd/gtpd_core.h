@@ -17,10 +17,14 @@ public:
         virtual GtpuTunnelDispatcher *tunnel_dispatcher(AF address_family) noexcept = 0;
         virtual void replace_tunnel_dispatcher(AF address_family,
                                                std::unique_ptr<GtpuTunnelDispatcher>) = 0;
+
+        virtual void register_session_leader(GtpuTunnelId, const Fd &) = 0;
+        virtual void unregister_session_leader(const Fd &) = 0;
     };
 
     std::pair<GtpuTunnelId, Fd> create_tunnel(GtpuTunnel, InnerProto,
-                                              Cookie, Fd xdp_sock);
+                                              Cookie, Fd xdp_sock,
+                                              Fd session_leader_pidfd);
     void delete_tunnel(GtpuTunnelId);
     void modify_tunnel(GtpuTunnelId, GtpuTunnel, InnerProto);
     GtpuTunnelId next_tunnel(GtpuTunnelId);

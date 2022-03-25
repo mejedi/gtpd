@@ -9,4 +9,4 @@ ip link set dev lo up;
 ip link set dev gtpd-tap arp off up;
 ip link set dev eth0 arp off address 00:00:00:00:00:01 mtu 1400 up;
 ip route add default dev eth0;
-exec bash'
+GTPD_SESSION_LEADER_PID=$$ exec bash'

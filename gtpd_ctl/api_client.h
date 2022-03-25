@@ -6,7 +6,9 @@
 struct ApiClient {
     ApiClient(std::string_view path);
 
-    std::pair<uint32_t, Fd> create_gtpu_tunnel(const ApiCreateGtpuTunnelMsg &msg, const Fd &xdp_sock);
+    std::pair<uint32_t, Fd>
+    create_gtpu_tunnel(const ApiCreateGtpuTunnelMsg &msg, const Fd &xdp_sock,
+                       const Fd &session_leader_pidfd);
     void delete_gtpu_tunnel(const ApiDeleteGtpuTunnelMsg &msg);
     void modify_gtpu_tunnel(const ApiModifyGtpuTunnelMsg &msg);
 

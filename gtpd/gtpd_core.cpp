@@ -45,6 +45,7 @@ struct GtpdCore::Session {
     std::atomic_bool enable = true;
     std::atomic_int halt = 0;
     SocketRegistration net_sock_reg;
+    Fd session_leader_pidfd;
     GtpuPipe pipe;
 
     explicit Session(const GtpuTunnel &tun, Fd net_sock, Fd xdp_sock,
@@ -62,11 +63,15 @@ struct GtpdCore::Session {
 
 std::pair<GtpuTunnelId, Fd>
 GtpdCore::create_tunnel(GtpuTunnel tunnel, InnerProto inner_proto,
-                        Cookie cookie, Fd xdp_sock) {
+                        Cookie cookie, Fd xdp_sock,
+                        Fd session_leader_pidfd) {
 
-    // ensure that sessions has a spare slot
-    assert(sessions.size() >= 2);
+    // Find spare id
+    assert(!sessions.empty());
     if (sessions.back()) sessions.resize(sessions.size() + 1);
+    uint32_t id = 1;
+    while (sessions[id]) ++id;
+    assert(id < sessions.size());
 
     const AF address_family = tunnel.address_family();
     ensure_address_family_enabled(address_family);
@@ -81,6 +86,12 @@ GtpdCore::create_tunnel(GtpuTunnel tunnel, InnerProto inner_proto,
                                        cookie,
                                        options,
                                        std::move(bpf_state));
+
+    p->session_leader_pidfd = std::move(session_leader_pidfd);
+    delegate->register_session_leader(GtpuTunnelId(id), p->session_leader_pidfd);
+    on_failure unregister_session_leader([this, &p] () {
+        delegate->unregister_session_leader(p->session_leader_pidfd);
+    });
 
     auto key = p->pipe.tunnel().key();
     auto [it, inserted] = session_by_key.insert(std::make_pair(key, p.get()));
@@ -106,9 +117,6 @@ GtpdCore::create_tunnel(GtpuTunnel tunnel, InnerProto inner_proto,
 
     // It's important that we didn't "publish" it earlier.
     // Otherwise register_tunnel() might attempt to double register.
-    uint32_t id = 1;
-    while (sessions[id]) ++id;
-    assert(id < sessions.size());
     sessions[id] = std::move(p);
 
     return { GtpuTunnelId(id), std::move(xdp_bpf_prog) };
@@ -121,6 +129,7 @@ void GtpdCore::delete_tunnel(GtpuTunnelId id) {
     sync_with_workers();
     session_by_key.erase(sess.pipe.tunnel().key());
     unregister_tunnel(sess.pipe.tunnel());
+    delegate->unregister_session_leader(sess.session_leader_pidfd);
     sessions[uint32_t(id)].reset();
 }
 

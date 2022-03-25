@@ -12,6 +12,7 @@ enum ObjType {
     OBJ_API_SOCK = 3,
     OBJ_API_CLIENT_SOCK_RECV = 4,
     OBJ_API_CLIENT_SOCK_SEND = 5,
+    OBJ_SESS_LEADER = 6,
 
     OBJ_TYPE_MAX,
     OBJ_ALIGN_MIN = 8,
@@ -179,6 +180,9 @@ void Gtpd::run() {
             client = static_cast<ApiClient *>(decode_obj(evt.data.u64));
             api_client_state_machine(client, decode_type(evt.data.u64));
             break;
+        case OBJ_SESS_LEADER:
+            core.delete_tunnel(GtpuTunnelId(decode_uint(evt.data.u64)));
+            break;
         default:
             break;
         }
@@ -342,7 +346,8 @@ void Gtpd::api_client_serve(ApiClient *client) {
                 std::tie(id, client->outmsg_fd) = core.create_tunnel(
                     GtpuTunnel(msg.tunnel), InnerProto(msg.inner_proto),
                     Cookie(msg.cookie),
-                    std::move(client->inmsg_fds[0])
+                    std::move(client->inmsg_fds[0]),
+                    std::move(client->inmsg_fds[1])
                 );
                 resp.rc = uint32_t(id);
             }
@@ -414,6 +419,16 @@ void Gtpd::api_client_serve(ApiClient *client) {
     }
 }
 
+void Gtpd::register_session_leader(GtpuTunnelId tunnel_id, const Fd &pidfd) {
+    if (!pidfd) return;
+    add_watcher(pidfd, encode_uint(OBJ_SESS_LEADER, uint32_t(tunnel_id)), EPOLLIN);
+}
+
+void Gtpd::unregister_session_leader(const Fd &pidfd) {
+    if (!pidfd) return;
+    delete_watcher(pidfd);
+}
+
 bool Gtpd::api_client_serve_cont(ApiClient *client) {
     if (client->inmsg.code == API_LIST_GTPU_TUNNELS_CODE &&
         client->outmsg.code == API_GTPU_TUNNEL_LIST_ITEM_CODE) {
@@ -442,5 +457,12 @@ void Gtpd::modify_watcher(const Fd &fd, uint64_t data, int events) {
     if (epoll_ctl(epoll.get(), EPOLL_CTL_MOD, fd.get(), &evt) != 0) {
         throw std::system_error(errno, std::generic_category(),
                                 "epoll_ctl(APOLL_CTL_MOD)");
+    }
+}
+
+void Gtpd::delete_watcher(const Fd &fd) {
+    if (epoll_ctl(epoll.get(), EPOLL_CTL_DEL, fd.get(), nullptr) != 0) {
+        throw std::system_error(errno, std::generic_category(),
+                                "epoll_ctl(APOLL_CTL_DEL)");
     }
 }

@@ -6,6 +6,7 @@
 #include <string_view>
 #include <system_error>
 #include <tuple>
+#include <optional>
 
 namespace {
 
@@ -13,6 +14,16 @@ static const char err_ip_ipv6_mismatch[] = "IP/IPv6 mismatch";
 static const char err_duplicate_argument[] = "Duplicate argument";
 static const char err_unexpected_argument[] = "Unexpected argument";
 static const char err_id_required[] = "id required";
+
+template<typename U>
+static std::optional<U> atou(const char *s) {
+    char *reject;
+    errno = 0;
+    auto v = strtoul(s, &reject, 10);
+    if (errno || *reject || v > std::numeric_limits<U>::max())
+        return {};
+    return U(v);
+}
 
 // CmdLineSegment tracks the current argument in the command line.
 // Additionally, it tracks position of the "statement start", e.g.
@@ -59,12 +70,10 @@ struct CmdLineSeg {
         throw std::runtime_error(s.str());
     }
     uint32_t parse_u32() const {
-        char *reject;
-        errno = 0;
-        auto v = strtoul(end[-1], &reject, 10);
-        if (errno || *reject || v > std::numeric_limits<uint32_t>::max())
+        std::optional<uint32_t> v = atou<uint32_t>(end[-1]);
+        if (!v)
             err("Invalid argument, decimal integer required");
-        return static_cast<uint32_t>(v);
+        return *v;
     }
     uint32_t parse_ip(ApiAddr *addr, uint32_t expected_af) const {
         uint32_t af;
@@ -205,6 +214,13 @@ parse_create_gtpu_tunnel_cmd(CmdLineSeg s) {
 
     if (!cmd.if_name)
         throw std::runtime_error("Device name required, e.g. 'dev foo'");
+
+    if (auto *p = getenv("GTPD_SESSION_LEADER_PID")) {
+        std::optional<int> v = atou<int>(p);
+        if (!v)
+            throw std::runtime_error("GTPD_SESSION_LEADER_PID: invalid value");
+        cmd.session_leader_pid = *v;
+    }
 
     return cmd;
 }

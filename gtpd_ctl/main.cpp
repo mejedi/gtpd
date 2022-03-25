@@ -12,6 +12,8 @@
 #include <net/if.h>
 #include <system_error>
 #include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/syscall.h>
 
 static void print_tunnels(const std::vector<ApiGtpuTunnelListItemMsg> &list);
 static int bpf_set_link_xdp_fd(int ifindex, int fd, uint32_t flags);
@@ -35,7 +37,18 @@ struct CmdHandler {
                                     "Creating XDP socket");
         }
 
-        auto [id, bpf_prog] = client.create_gtpu_tunnel(cmd.msg, xdp_sock);
+        Fd pidfd;
+        if (cmd.session_leader_pid != -1) {
+            pidfd = Fd(syscall(SYS_pidfd_open, cmd.session_leader_pid, 0));
+            if (!pidfd) {
+                throw std::system_error(
+                    errno, std::generic_category(),
+                    "Obtaining pidfd for process " + std::to_string(cmd.session_leader_pid)
+                );
+            }
+        }
+
+        auto [id, bpf_prog] = client.create_gtpu_tunnel(cmd.msg, xdp_sock, pidfd);
 
         // Bind xdp_sock to the interface
         struct sockaddr_xdp addr = {};

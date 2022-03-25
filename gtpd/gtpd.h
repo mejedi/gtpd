@@ -83,6 +83,7 @@ private:
 
     void add_watcher(const Fd &fd, uint64_t data, int events);
     void modify_watcher(const Fd &fd, uint64_t data, int events);
+    void delete_watcher(const Fd &fd);
 
     GtpuTunnelDispatcher *tunnel_dispatcher(AF address_family) noexcept override {
         return tunnel_dispatcher_ref(address_family).get();
@@ -95,6 +96,9 @@ private:
                       server_sock_reg_ref(address_family));
         tunnel_dispatcher_ref(address_family) = std::move(disp);
     }
+
+    void register_session_leader(GtpuTunnelId, const Fd &) override;
+    void unregister_session_leader(const Fd &) override;
 
     void enable(AF address_family);
 

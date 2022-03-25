@@ -15,8 +15,9 @@ ApiClient::ApiClient(std::string_view path): sock(connect(path)) {
 
 std::pair<uint32_t, Fd>
 ApiClient::create_gtpu_tunnel(const ApiCreateGtpuTunnelMsg &msg,
-                                 const Fd &xdp_sock) {
-    send_request(&msg, msg.length, FdPtrs{ &xdp_sock });
+                              const Fd &xdp_sock,
+                              const Fd &session_leader_pidfd) {
+    send_request(&msg, msg.length, FdPtrs{ &xdp_sock, &session_leader_pidfd });
     Fds fds = receive_reply();
     return { verify_response(), std::move(fds[0]) };
 }
