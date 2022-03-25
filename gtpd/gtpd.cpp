@@ -213,8 +213,7 @@ void Gtpd::api_client_terminate(ApiClient *client) {
 
 void Gtpd::api_client_state_machine(ApiClient *client, int s) {
 
-    constexpr size_t len_min = offsetof(decltype(client->inmsg), length)
-                               + sizeof(client->inmsg.length);
+    constexpr size_t len_min = offsetof(ApiResponseMsg, rc); // code + length
 
     int send_limit = 16; // How many messages we send before yielding.
 

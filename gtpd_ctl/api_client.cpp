@@ -94,9 +94,7 @@ void ApiClient::send_request(const void *req, size_t reqlen, const Fd& fd) {
 }
 
 Fd ApiClient::receive_reply() {
-    constexpr size_t len_min = offsetof(decltype(reply), length)
-                                + sizeof(reply.length);
-
+    constexpr size_t len_min = offsetof(ApiResponseMsg, rc); // code + length
     Fd fd;
 
     size_t sz = 0;
