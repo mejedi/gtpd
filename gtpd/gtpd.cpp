@@ -293,12 +293,39 @@ void Gtpd::api_client_state_machine(ApiClient *client, int s) {
     }
 }
 
+static void encode_next_tunnel(GtpdCore &core, GtpuTunnelId id, ApiMsg *dest) {
+    id = core.next_tunnel(id);
+    if (id == GtpuTunnel::fixme()) {
+        auto &resp = dest->response;
+        resp.length = sizeof(resp);
+        resp.code = API_RESPONSE_CODE;
+        resp.rc = 0;
+    } else {
+        auto &list_item = dest->gtpu_tunnel_list_item;
+        list_item.length = sizeof(list_item);
+        list_item.code = API_GTPU_TUNNEL_LIST_ITEM_CODE;
+
+        auto const &pipe = core.gtpu_pipe(id);
+        list_item.tunnel = pipe.tunnel().api_gtpu_tunnel();
+        list_item.inner_proto = uint32_t(pipe.inner_proto());
+        list_item.halt = core.halt_code(id);
+        list_item.cookie = uint32_t(pipe.cookie());
+        list_item.encap_ok = pipe.encap_ok();
+        list_item.encap_drop_rx = pipe.encap_drop_rx();
+        list_item.encap_drop_tx = pipe.encap_drop_tx();
+        list_item.decap_ok = pipe.decap_ok();
+        list_item.decap_drop_rx = pipe.decap_drop_rx();
+        list_item.decap_drop_tx = pipe.decap_drop_tx();
+        list_item.decap_bad = pipe.decap_bad();
+        list_item.decap_trunc = pipe.decap_trunc();
+    }
+}
+
 void Gtpd::api_client_serve(ApiClient *client) {
 
     auto &resp = client->outmsg.response;
     resp.length = sizeof(resp);
     resp.code = API_RESPONSE_CODE;
-    resp.rc = 0;
     try {
         switch (client->inmsg.code) {
         default:
@@ -307,35 +334,55 @@ void Gtpd::api_client_serve(ApiClient *client) {
         case API_CREATE_GTPU_TUNNEL_CODE: {
                 auto &msg = client->inmsg.create_gtpu_tunnel;
                 if (client->inmsg.length != sizeof(msg)) {
-                    resp.rc = -EINVAL; break;
+                    resp.rc = -EINVAL;
+                    break;
                 }
-                client->outmsg_fd
-                    = core.create_gtpu_tunnel(msg, std::move(client->inmsg_fd));
+                GtpuTunnelId id = GtpuTunnel::fixme();
+                std::tie(id, client->outmsg_fd) = core.create_tunnel(
+                    GtpuTunnel(msg.tunnel), InnerProto(msg.inner_proto),
+                    Cookie(msg.cookie),
+                    std::move(client->inmsg_fd)
+                );
+                resp.rc = 0;
             }
             break;
         case API_DELETE_GTPU_TUNNEL_CODE: {
                 auto &msg = client->inmsg.delete_gtpu_tunnel;
                 if (client->inmsg.length != sizeof(msg)) {
-                    resp.rc = -EINVAL; break;
+                    resp.rc = -EINVAL;
+                    break;
                 }
-                core.delete_gtpu_tunnel(msg);
+                core.delete_tunnel(GtpuTunnel(msg.tunnel));
+                resp.rc = 0;
             }
             break;
         case API_MODIFY_GTPU_TUNNEL_CODE: {
                 auto &msg = client->inmsg.modify_gtpu_tunnel;
                 if (client->inmsg.length != sizeof(msg)) {
-                    resp.rc = -EINVAL; break;
+                    resp.rc = -EINVAL;
+                    break;
                 }
-                core.modify_gtpu_tunnel(msg);
+                auto &pipe = core.gtpu_pipe(GtpuTunnelId(msg.tunnel));
+                ApiGtpuTunnel tunnel = pipe.tunnel().api_gtpu_tunnel();
+                InnerProto inner_proto = pipe.inner_proto();
+                if (msg.flags & API_MODIFY_GTPU_TUNNEL_TUNNEL_FLAG) {
+                    tunnel = msg.new_tunnel;
+                }
+                if (msg.flags & API_MODIFY_GTPU_TUNNEL_INNER_PROTO_FLAG) {
+                    inner_proto = InnerProto(msg.new_inner_proto);
+                }
+                core.modify_tunnel(GtpuTunnelId(msg.tunnel), GtpuTunnel(tunnel), inner_proto);
+                resp.rc = 0;
             }
             break;
-        case API_LIST_GTPU_TUNNELS_CODE:
-            auto &msg = client->inmsg.list_gtpu_tunnels;
-            if (client->inmsg.length != sizeof(msg)) {
-                resp.rc = -EINVAL; break;
+        case API_LIST_GTPU_TUNNELS_CODE: {
+                auto &msg = client->inmsg.list_gtpu_tunnels;
+                if (client->inmsg.length != sizeof(msg)) {
+                    resp.rc = -EINVAL;
+                    break;
+                }
+                encode_next_tunnel(core, GtpuTunnel::fixme(), &client->outmsg);
             }
-            auto sess = core.list_gtpu_tunnels_next(msg, nullptr);
-            if (sess) client->outmsg.gtpu_tunnel_list_item = *sess;
             break;
         }
     } catch (const std::bad_alloc &) {
@@ -349,18 +396,8 @@ bool Gtpd::api_client_serve_cont(ApiClient *client) {
     if (client->inmsg.code == API_LIST_GTPU_TUNNELS_CODE &&
         client->outmsg.code == API_GTPU_TUNNEL_LIST_ITEM_CODE) {
 
-        auto *current = &client->outmsg.gtpu_tunnel_list_item.tunnel;
-        auto sess = core.list_gtpu_tunnels_next(
-            client->inmsg.list_gtpu_tunnels, current);
-        if (sess) {
-            client->outmsg.gtpu_tunnel_list_item = *sess;
-        } else {
-            auto &resp = client->outmsg.response;
-            resp.length = sizeof(resp);
-            resp.code = API_RESPONSE_CODE;
-            resp.rc = 0;
-        }
-
+        auto id = GtpuTunnel(client->outmsg.gtpu_tunnel_list_item.tunnel);
+        encode_next_tunnel(core, id, &client->outmsg);
         return true;
     }
     return false;

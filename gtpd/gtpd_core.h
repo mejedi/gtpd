@@ -8,6 +8,10 @@
 #include <signal.h>
 #include <vector>
 
+// Opaque integer id; zero is invalid.
+//enum class GtpuTunnelId: uint32_t {};
+using GtpuTunnelId = GtpuTunnel;
+
 class GtpdCore {
 public:
     struct Delegate {
@@ -16,13 +20,13 @@ public:
                                                std::unique_ptr<GtpuTunnelDispatcher>) = 0;
     };
 
-    Fd create_gtpu_tunnel(const ApiCreateGtpuTunnelMsg &msg, Fd xdp_sock);
-    void delete_gtpu_tunnel(const ApiDeleteGtpuTunnelMsg &msg);
-    void modify_gtpu_tunnel(const ApiModifyGtpuTunnelMsg &msg);
-
-    std::optional<ApiGtpuTunnelListItemMsg>
-    list_gtpu_tunnels_next(const ApiListGtpuTunnelsMsg &msg,
-                           const ApiGtpuTunnel *cur);
+    std::pair<GtpuTunnelId, Fd> create_tunnel(GtpuTunnel, InnerProto,
+                                              Cookie, Fd xdp_sock);
+    void delete_tunnel(GtpuTunnelId);
+    void modify_tunnel(GtpuTunnelId, GtpuTunnel, InnerProto);
+    GtpuTunnelId next_tunnel(GtpuTunnelId);
+    const GtpuPipe &gtpu_pipe(GtpuTunnelId);
+    int halt_code(GtpuTunnelId);
 
     struct Options: GtpuPipe::Options {
         // int encap_mtu
@@ -40,6 +44,8 @@ private:
     struct Worker;
     struct Watcher;
     struct Session;
+
+    Session &session_by_id(GtpuTunnelId id);
 
 private:
     Delegate * const delegate;

@@ -48,8 +48,8 @@ struct GtpdCore::Session {
     GtpuPipe pipe;
 
     explicit Session(const GtpuTunnel &tun, Fd net_sock, Fd xdp_sock,
-                     GtpuPipe::InnerProto inner_proto,
-                     GtpuPipe::Cookie cookie,
+                     InnerProto inner_proto,
+                     Cookie cookie,
                      const GtpdCore::Options &opts,
                      GtpuPipe::BpfState bpf_state):
         net_sock_reg(net_sock),
@@ -60,9 +60,10 @@ struct GtpdCore::Session {
     Watcher xdp_sock_watcher() const;
 };
 
-Fd GtpdCore::create_gtpu_tunnel(const ApiCreateGtpuTunnelMsg &msg,
-                                Fd xdp_sock) {
-    GtpuTunnel tunnel(msg.tunnel);
+std::pair<GtpuTunnelId, Fd>
+GtpdCore::create_tunnel(GtpuTunnel tunnel, InnerProto inner_proto,
+                        Cookie cookie, Fd xdp_sock) {
+
     const AF address_family = tunnel.address_family();
     ensure_address_family_enabled(address_family);
 
@@ -72,8 +73,8 @@ Fd GtpdCore::create_gtpu_tunnel(const ApiCreateGtpuTunnelMsg &msg,
     auto p = std::make_unique<Session>(tunnel,
                                        gtpu_socket(address_family),
                                        std::move(xdp_sock),
-                                       GtpuPipe::InnerProto(msg.inner_proto),
-                                       GtpuPipe::Cookie(msg.cookie),
+                                       inner_proto,
+                                       cookie,
                                        options,
                                        std::move(bpf_state));
 
@@ -103,11 +104,10 @@ Fd GtpdCore::create_gtpu_tunnel(const ApiCreateGtpuTunnelMsg &msg,
     // Otherwise register_tunnel() might attempt to double register.
     it->second = std::move(p);
 
-    return xdp_bpf_prog;
+    return { GtpuTunnel::fixme(), std::move(xdp_bpf_prog) };
 }
 
-void GtpdCore::delete_gtpu_tunnel(const ApiDeleteGtpuTunnelMsg &msg) {
-    GtpuTunnel tunnel(msg.tunnel);
+void GtpdCore::delete_tunnel(GtpuTunnelId tunnel) {
     auto it = sessions.find(tunnel.key());
     if (it == sessions.end()
         || it->second->pipe.tunnel().local_teid() != tunnel.local_teid()
@@ -120,14 +120,16 @@ void GtpdCore::delete_gtpu_tunnel(const ApiDeleteGtpuTunnelMsg &msg) {
     unregister_tunnel(p->pipe.tunnel());
 }
 
-void GtpdCore::modify_gtpu_tunnel(const ApiModifyGtpuTunnelMsg &msg) {
-    GtpuTunnel tunnel(msg.tunnel);
+void GtpdCore::modify_tunnel(GtpuTunnelId tunnel,
+                             GtpuTunnel new_tunnel, InnerProto new_inner_proto) {
 
     auto it = sessions.find(tunnel.key());
     if (it == sessions.end()
         || it->second->pipe.tunnel().local_teid() != tunnel.local_teid()
     ) throw std::system_error(ENOENT, std::generic_category());
     auto *sess = it->second.get();
+
+    ensure_address_family_enabled(new_tunnel.address_family());
 
     sess->enable.store(false, std::memory_order_relaxed);
     on_scope_exit enable_session([this, sess] () {
@@ -140,42 +142,35 @@ void GtpdCore::modify_gtpu_tunnel(const ApiModifyGtpuTunnelMsg &msg) {
     // Unlike delete_session, we don't EPOLL_CTL_DEL as we might
     // be unable to add it back (EPOLL_CTL_ADD allocates memory).
 
-    if (msg.flags & API_MODIFY_GTPU_TUNNEL_TUNNEL_FLAG) {
-        GtpuTunnel new_tunnel(msg.new_tunnel);
-        ensure_address_family_enabled(new_tunnel.address_family());
+    if (tunnel.key() == new_tunnel.key()) {
+        modify_session_socket_and_bpf_maps(sess, new_tunnel);
+    } else {
+        auto [new_it, inserted]
+            = sessions.insert(std::make_pair(new_tunnel.key(), std::unique_ptr<Session>()));
+        if (!inserted) throw std::system_error(EEXIST, std::generic_category());
+        on_failure erase_session([this, new_it] () { sessions.erase(new_it); });
 
-        if (tunnel.key() == new_tunnel.key()) {
-            modify_session_socket_and_bpf_maps(sess, new_tunnel);
-        } else {
-            auto [new_it, inserted]
-                = sessions.insert(std::make_pair(new_tunnel.key(), std::unique_ptr<Session>()));
-            if (!inserted) throw std::system_error(EEXIST, std::generic_category());
-            on_failure erase_session([this, new_it] () { sessions.erase(new_it); });
+        modify_session_socket_and_bpf_maps(sess, new_tunnel);
 
-            modify_session_socket_and_bpf_maps(sess, new_tunnel);
-
-            new_it->second = std::move(it->second);
-            sessions.erase(it);
-            it = new_it;
-        }
-
-        sess->pipe.set_tunnel(new_tunnel);
-        assert(it->first == sess->pipe.tunnel().key());
-        // it->first might be referring to new_tunnel via
-        // string_view pointers, but new_tunnel is going out of scope.
-        const_cast<std::u32string_view &>(it->first) = sess->pipe.tunnel().key();
+        new_it->second = std::move(it->second);
+        sessions.erase(it);
+        it = new_it;
     }
 
-    if (msg.flags & API_MODIFY_GTPU_TUNNEL_INNER_PROTO_FLAG) {
-        // Wrapping the code in noexcept lambda, so that the program
-        // terminates if it throws.  Rationale: modify_gtpu_tunnel
-        // should either succeed or have no effect.  Implementing
-        // rollback for a failure case that doesn't occur is a waste of
-        // effort.
-        [sess, &msg] () noexcept {
-            sess->pipe.set_inner_proto(GtpuPipe::InnerProto(msg.new_inner_proto));
-        } ();
-    }
+    sess->pipe.set_tunnel(new_tunnel);
+    assert(it->first == sess->pipe.tunnel().key());
+    // it->first might be referring to new_tunnel via
+    // string_view pointers, but new_tunnel is going out of scope.
+    const_cast<std::u32string_view &>(it->first) = sess->pipe.tunnel().key();
+
+    // Wrapping the code in noexcept lambda, so that the program
+    // terminates if it throws.  Rationale: modify_tunnel
+    // should either succeed or have no effect.  Implementing
+    // rollback for a failure case that doesn't occur is a waste of
+    // effort.
+    [sess, new_inner_proto] () noexcept {
+        sess->pipe.set_inner_proto(new_inner_proto);
+    } ();
 }
 
 // Switch between AF_INET and AF_INET6 if necessary and modify BPF maps.
@@ -200,35 +195,31 @@ void GtpdCore::modify_session_socket_and_bpf_maps(Session* sess, const GtpuTunne
     }
 }
 
+GtpuTunnel GtpdCore::next_tunnel(GtpuTunnel tunnel) {
+    auto it = sessions.upper_bound(tunnel.key());
+    if (it == sessions.end()) return GtpuTunnel::fixme();
+    return it->second->pipe.tunnel();
+}
+
+GtpdCore::Session &GtpdCore::session_by_id(GtpuTunnel tunnel) {
+    auto it = sessions.find(tunnel.key());
+    if (it == sessions.end()
+        || it->second->pipe.tunnel().local_teid() != tunnel.local_teid()
+    ) throw std::system_error(ENOENT, std::generic_category());
+    return *it->second;
+}
+
+const GtpuPipe &GtpdCore::gtpu_pipe(GtpuTunnel tunnel) {
+    return session_by_id(tunnel).pipe;
+}
+
+int GtpdCore::halt_code(GtpuTunnel tunnel) {
+    return session_by_id(tunnel).halt.load(std::memory_order_relaxed);
+}
+
 void GtpdCore::ensure_address_family_enabled(AF address_family) const {
     if (delegate->tunnel_dispatcher(address_family) == nullptr)
         throw std::system_error(EAFNOSUPPORT, std::generic_category());
-}
-
-std::optional<ApiGtpuTunnelListItemMsg>
-GtpdCore::list_gtpu_tunnels_next(const ApiListGtpuTunnelsMsg &,
-                                 const ApiGtpuTunnel *cur)
-{
-    auto it = cur ? sessions.upper_bound(GtpuTunnel(*cur).key())
-              : sessions.begin();
-    if (it == sessions.end()) return {};
-    ApiGtpuTunnelListItemMsg res = {};
-    res.length = sizeof(res);
-    res.code = API_GTPU_TUNNEL_LIST_ITEM_CODE;
-    const auto& sess = it->second;
-    res.tunnel = sess->pipe.tunnel().api_gtpu_tunnel();
-    res.inner_proto = uint32_t(sess->pipe.inner_proto());
-    res.halt = sess->halt.load(std::memory_order_relaxed);
-    res.cookie = uint32_t(sess->pipe.cookie());
-    res.encap_ok = sess->pipe.encap_ok();
-    res.encap_drop_rx = sess->pipe.encap_drop_rx();
-    res.encap_drop_tx = sess->pipe.encap_drop_tx();
-    res.decap_ok = sess->pipe.decap_ok();
-    res.decap_drop_rx = sess->pipe.decap_drop_rx();
-    res.decap_drop_tx = sess->pipe.decap_drop_tx();
-    res.decap_bad = sess->pipe.decap_bad();
-    res.decap_trunc = sess->pipe.decap_trunc();
-    return res;
 }
 
 void GtpdCore::register_tunnel(const GtpuTunnel &tunnel, const SocketRegistration &reg) {

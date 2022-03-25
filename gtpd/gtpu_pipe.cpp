@@ -11,13 +11,13 @@
 extern "C" {
 
 __attribute__((noinline, noclone)) void
-gtpd_encap_update(GtpuPipe::Cookie cookie, uint64_t encap_ok,
+gtpd_encap_update(Cookie cookie, uint64_t encap_ok,
                   uint64_t encap_drop_rx, uint64_t encap_drop_tx) {
     asm volatile ("");
 }
 
 __attribute__((noinline, noclone)) void
-gtpd_decap_update(GtpuPipe::Cookie cookie, uint64_t decap_ok,
+gtpd_decap_update(Cookie cookie, uint64_t decap_ok,
                   uint64_t decap_drop_rx, uint64_t decap_drop_tx,
                   uint64_t decap_bad, uint64_t decap_trunc) {
     asm volatile ("");

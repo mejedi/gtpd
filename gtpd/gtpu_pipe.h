@@ -3,6 +3,14 @@
 #include "gtpu_tunnel.h"
 #include "xdp.h"
 
+// Protocol inside the tunnel.  Used uninterpreted to fill in or
+// check ethertype in Ethernet header in veth link accessed via XDP
+// socket.  Common values include htons(ETH_P_IP) and htons(ETH_P_IPV6).
+enum class InnerProto: uint16_t {};
+
+// Opaque integer id.
+enum class Cookie: uint32_t {};
+
 // Receives on XDP socket, GTPU encapsulates, and sends on NET (UDP)
 // socket.  Also receives on NET, decapsulates, and sends on XDP.
 //
@@ -15,13 +23,6 @@ struct GtpuPipe {
         int batch_size = 128;          // number of packets exchanged in a batch
         int xdp_pool_size = 512;       // number of pages in XDP pool
     };
-
-    // Protocol inside the tunnel.  Used uninterpreted to fill in or
-    // check ethertype in Ethernet header in veth link accessed via XDP
-    // socket.  Common values include htons(ETH_P_IP) and htons(ETH_P_IPV6).
-    enum class InnerProto: uint16_t {};
-
-    enum class Cookie: uint32_t {};
 
 private:
     struct EncapState;
