@@ -364,14 +364,35 @@ void Gtpd::api_client_serve(ApiClient *client) {
                 }
                 auto id = core.lookup_tunnel_fixme(GtpuTunnel(msg.tunnel));
                 auto &pipe = core.gtpu_pipe(id);
+
                 ApiGtpuTunnel tunnel = pipe.tunnel().api_gtpu_tunnel();
-                InnerProto inner_proto = pipe.inner_proto();
-                if (msg.flags & API_MODIFY_GTPU_TUNNEL_TUNNEL_FLAG) {
-                    tunnel = msg.new_tunnel;
+                static constexpr auto lar_mask =
+                    API_MODIFY_GTPU_TUNNEL_LOCAL_FLAG | API_MODIFY_GTPU_TUNNEL_REMOTE_FLAG;
+                if (auto fl = msg.flags & lar_mask) {
+                    if (fl != lar_mask
+                        && tunnel.address_family != msg.new_tunnel.address_family
+                    ) {
+                        resp.rc = -EINVAL;
+                        break;
+                    }
+                    tunnel.address_family = msg.new_tunnel.address_family;
+                    if (msg.flags & API_MODIFY_GTPU_TUNNEL_LOCAL_FLAG)
+                        tunnel.local = msg.new_tunnel.local;
+                    if (msg.flags & API_MODIFY_GTPU_TUNNEL_REMOTE_FLAG)
+                        tunnel.remote = msg.new_tunnel.remote;
                 }
+                if (msg.flags & API_MODIFY_GTPU_TUNNEL_LOCAL_TEID_FLAG) {
+                    tunnel.local_teid = msg.new_tunnel.local_teid;
+                }
+                if (msg.flags & API_MODIFY_GTPU_TUNNEL_REMOTE_TEID_FLAG) {
+                    tunnel.remote_teid = msg.new_tunnel.remote_teid;
+                }
+
+                InnerProto inner_proto = pipe.inner_proto();
                 if (msg.flags & API_MODIFY_GTPU_TUNNEL_INNER_PROTO_FLAG) {
                     inner_proto = InnerProto(msg.new_inner_proto);
                 }
+
                 core.modify_tunnel(id, GtpuTunnel(tunnel), inner_proto);
                 resp.rc = 0;
             }

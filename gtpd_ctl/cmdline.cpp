@@ -251,36 +251,14 @@ ModifyGtpuTunnelCmd parse_modify_gtpu_tunnel_cmd(CmdLineSeg s) {
 
     key_tun_parser.check_required_fields();
 
-    if (new_tun_parser.local || new_tun_parser.remote
-        || new_tun_parser.local_teid || new_tun_parser.remote_teid) {
-
-        cmd.msg.flags |= API_MODIFY_GTPU_TUNNEL_TUNNEL_FLAG;
-
-        if (!new_tun_parser.local_teid)
-            cmd.msg.new_tunnel.local_teid = cmd.msg.tunnel.local_teid;
-
-        if (!new_tun_parser.remote_teid)
-            cmd.msg.new_tunnel.remote_teid = cmd.msg.tunnel.remote_teid;
-
-        uint32_t local_af = cmd.msg.new_tunnel.address_family;
-        uint32_t remote_af = cmd.msg.new_tunnel.address_family;
-
-        if (!new_tun_parser.local) {
-            cmd.msg.new_tunnel.local = cmd.msg.tunnel.local;
-            local_af = cmd.msg.tunnel.address_family;
-        }
-
-        if (!new_tun_parser.remote) {
-            cmd.msg.new_tunnel.remote = cmd.msg.tunnel.remote;
-            remote_af = cmd.msg.tunnel.address_family;
-        }
-
-        if (local_af != remote_af)
-            (new_tun_parser.local ? new_tun_parser.local
-            : new_tun_parser.remote).err(err_ip_ipv6_mismatch);
-
-        cmd.msg.new_tunnel.address_family = local_af;
-    }
+    if (new_tun_parser.local)
+        cmd.msg.flags |= API_MODIFY_GTPU_TUNNEL_LOCAL_FLAG;
+    if (new_tun_parser.remote)
+        cmd.msg.flags |= API_MODIFY_GTPU_TUNNEL_REMOTE_FLAG;
+    if (new_tun_parser.local_teid)
+        cmd.msg.flags |= API_MODIFY_GTPU_TUNNEL_LOCAL_TEID_FLAG;
+    if (new_tun_parser.remote_teid)
+        cmd.msg.flags |= API_MODIFY_GTPU_TUNNEL_REMOTE_TEID_FLAG;
 
     if (new_inner_proto_parser.loc)
         cmd.msg.flags |= API_MODIFY_GTPU_TUNNEL_INNER_PROTO_FLAG;
