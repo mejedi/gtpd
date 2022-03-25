@@ -3,14 +3,13 @@
 #include "gtpu_pipe.h"
 #include <atomic>
 #include <condition_variable>
-#include <map>
+#include <unordered_map>
 #include <mutex>
 #include <signal.h>
 #include <vector>
 
 // Opaque integer id; zero is invalid.
-//enum class GtpuTunnelId: uint32_t {};
-using GtpuTunnelId = GtpuTunnel;
+enum class GtpuTunnelId: uint32_t {};
 
 class GtpdCore {
 public:
@@ -27,6 +26,8 @@ public:
     GtpuTunnelId next_tunnel(GtpuTunnelId);
     const GtpuPipe &gtpu_pipe(GtpuTunnelId);
     int halt_code(GtpuTunnelId);
+
+    GtpuTunnelId lookup_tunnel_fixme(const GtpuTunnel &);
 
     struct Options: GtpuPipe::Options {
         // int encap_mtu
@@ -51,7 +52,8 @@ private:
     Delegate * const delegate;
     const Options options;
     const Fd epoll;
-    std::map<std::u32string_view, std::unique_ptr<Session>> sessions;
+    std::vector<std::unique_ptr<Session>> sessions;
+    std::unordered_map<std::u32string_view, Session *> session_by_key;
     std::vector<Worker> workers;
 
     struct {
@@ -81,5 +83,5 @@ private:
     void sync_with_workers();
     void stop_workers();
 
-    void modify_session_socket_and_bpf_maps(Session* sess, const GtpuTunnel &new_tunnel);
+    void modify_session_socket_and_bpf_maps(Session &sess, const GtpuTunnel &new_tunnel);
 };

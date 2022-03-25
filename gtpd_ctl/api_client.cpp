@@ -128,11 +128,12 @@ Fd ApiClient::receive_reply() {
     return fd;
 }
 
-void ApiClient::verify_response() {
+uint32_t ApiClient::verify_response() {
     if (reply.code != API_RESPONSE_CODE
         || reply.length < sizeof(reply.response)
     ) throw std::runtime_error(err_invalid_response);
-    if (reply.response.rc != 0)
+    if (reply.response.rc < 0)
         throw std::system_error(-reply.response.rc,
                                 std::generic_category(), "gtpd");
+    return reply.response.rc;
 }

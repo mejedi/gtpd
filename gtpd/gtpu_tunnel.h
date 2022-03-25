@@ -110,10 +110,6 @@ public:
     // Using sockets bound to INADDR_ANY, therefore it is necessary
     // to specify both the source and destination addresses,
     void set_outbound_msg_meta(msghdr *m, MsgMetaStorage *s) const;
-
-    static GtpuTunnel fixme() { return GtpuTunnel{}; }
-private:
-    GtpuTunnel() { memset(&data, 0, sizeof(data)); }
 };
 
 inline bool operator==(const GtpuTunnel& a, const GtpuTunnel& b) {

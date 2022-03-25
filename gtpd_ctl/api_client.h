@@ -24,5 +24,5 @@ private:
     static Fd connect(std::string_view path);
     void send_request(const void *req, size_t reqlen, const Fd& fd = Fd());
     Fd receive_reply();
-    void verify_response();
+    uint32_t verify_response();
 };

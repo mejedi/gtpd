@@ -295,7 +295,7 @@ void Gtpd::api_client_state_machine(ApiClient *client, int s) {
 
 static void encode_next_tunnel(GtpdCore &core, GtpuTunnelId id, ApiMsg *dest) {
     id = core.next_tunnel(id);
-    if (id == GtpuTunnel::fixme()) {
+    if (id == GtpuTunnelId(0)) {
         auto &resp = dest->response;
         resp.length = sizeof(resp);
         resp.code = API_RESPONSE_CODE;
@@ -337,13 +337,13 @@ void Gtpd::api_client_serve(ApiClient *client) {
                     resp.rc = -EINVAL;
                     break;
                 }
-                GtpuTunnelId id = GtpuTunnel::fixme();
+                GtpuTunnelId id;
                 std::tie(id, client->outmsg_fd) = core.create_tunnel(
                     GtpuTunnel(msg.tunnel), InnerProto(msg.inner_proto),
                     Cookie(msg.cookie),
                     std::move(client->inmsg_fd)
                 );
-                resp.rc = 0;
+                resp.rc = uint32_t(id);
             }
             break;
         case API_DELETE_GTPU_TUNNEL_CODE: {
@@ -352,7 +352,7 @@ void Gtpd::api_client_serve(ApiClient *client) {
                     resp.rc = -EINVAL;
                     break;
                 }
-                core.delete_tunnel(GtpuTunnel(msg.tunnel));
+                core.delete_tunnel(core.lookup_tunnel_fixme(GtpuTunnel(msg.tunnel)));
                 resp.rc = 0;
             }
             break;
@@ -362,7 +362,8 @@ void Gtpd::api_client_serve(ApiClient *client) {
                     resp.rc = -EINVAL;
                     break;
                 }
-                auto &pipe = core.gtpu_pipe(GtpuTunnelId(msg.tunnel));
+                auto id = core.lookup_tunnel_fixme(GtpuTunnel(msg.tunnel));
+                auto &pipe = core.gtpu_pipe(id);
                 ApiGtpuTunnel tunnel = pipe.tunnel().api_gtpu_tunnel();
                 InnerProto inner_proto = pipe.inner_proto();
                 if (msg.flags & API_MODIFY_GTPU_TUNNEL_TUNNEL_FLAG) {
@@ -371,7 +372,7 @@ void Gtpd::api_client_serve(ApiClient *client) {
                 if (msg.flags & API_MODIFY_GTPU_TUNNEL_INNER_PROTO_FLAG) {
                     inner_proto = InnerProto(msg.new_inner_proto);
                 }
-                core.modify_tunnel(GtpuTunnelId(msg.tunnel), GtpuTunnel(tunnel), inner_proto);
+                core.modify_tunnel(id, GtpuTunnel(tunnel), inner_proto);
                 resp.rc = 0;
             }
             break;
@@ -381,7 +382,7 @@ void Gtpd::api_client_serve(ApiClient *client) {
                     resp.rc = -EINVAL;
                     break;
                 }
-                encode_next_tunnel(core, GtpuTunnel::fixme(), &client->outmsg);
+                encode_next_tunnel(core, GtpuTunnelId(0), &client->outmsg);
             }
             break;
         }
@@ -396,7 +397,7 @@ bool Gtpd::api_client_serve_cont(ApiClient *client) {
     if (client->inmsg.code == API_LIST_GTPU_TUNNELS_CODE &&
         client->outmsg.code == API_GTPU_TUNNEL_LIST_ITEM_CODE) {
 
-        auto id = GtpuTunnel(client->outmsg.gtpu_tunnel_list_item.tunnel);
+        auto id = core.lookup_tunnel_fixme(GtpuTunnel(client->outmsg.gtpu_tunnel_list_item.tunnel));
         encode_next_tunnel(core, id, &client->outmsg);
         return true;
     }
