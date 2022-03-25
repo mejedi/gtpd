@@ -1,11 +1,14 @@
 #pragma once
 #include "fd.h"
 
-// Convenience wrapper for sendmsg/recvmsg allowing to pass at most 1
-// file descriptor along with the message.
+using Fds = std::array<Fd, 2>;
+using FdPtrs = std::array<const Fd *, 2>;
+
+// Convenience wrapper for sendmsg/recvmsg allowing to pass at most N
+// file descriptors along with the message.
 
 ssize_t api_sock_send(const Fd &sock, const void *p, size_t sz,
-                      const Fd &fd, int flags);
+                      FdPtrs fdPtrs, int flags);
 
-std::pair<ssize_t, Fd>
+std::pair<ssize_t, Fds>
 api_sock_recv(const Fd &sock, void *p, size_t sz, int flags);

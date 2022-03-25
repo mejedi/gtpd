@@ -16,9 +16,9 @@ ApiClient::ApiClient(std::string_view path): sock(connect(path)) {
 std::pair<uint32_t, Fd>
 ApiClient::create_gtpu_tunnel(const ApiCreateGtpuTunnelMsg &msg,
                                  const Fd &xdp_sock) {
-    send_request(&msg, msg.length, xdp_sock);
-    Fd bpf_prog = receive_reply();
-    return { verify_response(), std::move(bpf_prog) };
+    send_request(&msg, msg.length, FdPtrs{ &xdp_sock });
+    Fds fds = receive_reply();
+    return { verify_response(), std::move(fds[0]) };
 }
 
 void ApiClient::delete_gtpu_tunnel(const ApiDeleteGtpuTunnelMsg &msg) {
@@ -66,12 +66,11 @@ Fd ApiClient::connect(std::string_view path) {
     return sock;
 }
 
-void ApiClient::send_request(const void *req, size_t reqlen, const Fd& fd) {
+void ApiClient::send_request(const void *req, size_t reqlen, FdPtrs fdPtrs) {
     const uint8_t *p = reinterpret_cast<const uint8_t *>(req);
     size_t reqoff = 0;
     while (reqoff != reqlen) {
-        auto rc = api_sock_send(sock, p + reqoff, reqlen - reqoff,
-                                reqoff ? static_cast<const Fd&>(Fd()) : fd,
+        auto rc = api_sock_send(sock, p + reqoff, reqlen - reqoff, fdPtrs,
                                 MSG_NOSIGNAL);
         if (rc == -1) {
             if (errno == EINTR) continue;
@@ -80,12 +79,13 @@ void ApiClient::send_request(const void *req, size_t reqlen, const Fd& fd) {
         }
 
         reqoff += rc;
+        fdPtrs = FdPtrs();
     }
 }
 
-Fd ApiClient::receive_reply() {
+Fds ApiClient::receive_reply() {
     constexpr size_t len_min = offsetof(ApiResponseMsg, rc); // code + length
-    Fd fd;
+    Fds fds;
 
     size_t sz = 0;
     if (reply_size) {
@@ -98,9 +98,9 @@ Fd ApiClient::receive_reply() {
     }
 
     while (sz < len_min || sz < std::min<size_t>(reply.length,
-                                                    sizeof(reply_buf))
+                                                 sizeof(reply_buf))
     ) {
-        ssize_t rc; std::tie(rc, fd) = api_sock_recv(
+        ssize_t rc; std::tie(rc, fds) = api_sock_recv(
             sock, reply_buf + sz, sizeof(reply_buf) - sz,
             MSG_CMSG_CLOEXEC
         );
@@ -115,7 +115,7 @@ Fd ApiClient::receive_reply() {
         sz += rc;
     }
     reply_size = sz;
-    return fd;
+    return fds;
 }
 
 uint32_t ApiClient::verify_response() {

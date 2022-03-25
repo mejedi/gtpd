@@ -4,33 +4,41 @@
 #include <sys/un.h>
 
 ssize_t api_sock_send(const Fd &sock, const void *p, size_t sz,
-                      const Fd &fd, int flags) {
+                      FdPtrs fdPtrs, int flags) {
     iovec iov = { const_cast<void *>(p), sz };
 
     msghdr m = {};
     m.msg_iov = &iov;
     m.msg_iovlen = 1;
 
-    uint8_t cmsg_buf[CMSG_SPACE(sizeof(int))] alignas(cmsghdr);
-    if (fd) {
-        auto *cmsg = reinterpret_cast<cmsghdr *>(cmsg_buf);
-        cmsg->cmsg_len = CMSG_LEN(sizeof(int));
-        cmsg->cmsg_level = SOL_SOCKET;
-        cmsg->cmsg_type = SCM_RIGHTS;
-        reinterpret_cast<int *>(CMSG_DATA(cmsg))[0] = fd.get();
+    uint8_t cmsg_buf[
+        CMSG_SPACE(sizeof(int) * std::tuple_size<FdPtrs>::value)
+    ] alignas(cmsghdr);
+    auto *cmsg = reinterpret_cast<cmsghdr *>(cmsg_buf);
+    int n = 0;
 
-        m.msg_control = cmsg_buf;
-        m.msg_controllen = CMSG_SPACE(sizeof(int));
+    for (auto p: fdPtrs) {
+        if (p && *p) reinterpret_cast<int *>(CMSG_DATA(cmsg))[n++] = p->get();
     }
 
-   return sendmsg(sock.get(), &m, flags);
+    if (n) {
+        cmsg->cmsg_len = CMSG_LEN(sizeof(int) * n);
+        cmsg->cmsg_level = SOL_SOCKET;
+        cmsg->cmsg_type = SCM_RIGHTS;
+        m.msg_control = cmsg_buf;
+        m.msg_controllen = CMSG_SPACE(sizeof(int) * n);
+    }
+
+    return sendmsg(sock.get(), &m, flags);
 }
 
-std::pair<ssize_t, Fd>
+std::pair<ssize_t, Fds>
 api_sock_recv(const Fd &sock, void *p, size_t sz, int flags) {
     iovec iov = { p, sz };
 
-    uint8_t cmsg_buf[CMSG_SPACE(sizeof(int))] alignas(cmsghdr);
+    uint8_t cmsg_buf[
+        CMSG_SPACE(sizeof(int) * std::tuple_size<Fds>::value)
+    ] alignas(cmsghdr);
 
     msghdr m = {};
     m.msg_iov = &iov;
@@ -45,11 +53,17 @@ api_sock_recv(const Fd &sock, void *p, size_t sz, int flags) {
             if (cmsg->cmsg_level == SOL_SOCKET
                 && cmsg->cmsg_type == SCM_RIGHTS
             ) {
-                assert(cmsg->cmsg_len == CMSG_LEN(sizeof(int)));
-                return { rc, Fd(reinterpret_cast<int *>(CMSG_DATA(cmsg))[0]) };
+                Fds fds;
+                for (unsigned i = 0, len = sizeof(int);
+                    cmsg->cmsg_len >= CMSG_LEN(len);
+                    ++i, len += sizeof(int)
+                ) {
+                    fds[i] = Fd(reinterpret_cast<int*>(CMSG_DATA(cmsg))[i]);
+                }
+                return { rc, std::move(fds) };
             }
         }
     }
 
-    return { rc, Fd() };
+    return { rc, Fds() };
 }

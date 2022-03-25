@@ -1,5 +1,6 @@
 #pragma once
 #include "common/fd.h"
+#include "common/api_sock_io.h"
 #include "gtpd/api.h"
 
 struct ApiClient {
@@ -22,7 +23,7 @@ private:
 
 private:
     static Fd connect(std::string_view path);
-    void send_request(const void *req, size_t reqlen, const Fd& fd = Fd());
-    Fd receive_reply();
+    void send_request(const void *req, size_t reqlen, FdPtrs = FdPtrs());
+    Fds receive_reply();
     uint32_t verify_response();
 };

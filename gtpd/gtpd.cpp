@@ -46,7 +46,7 @@ struct Gtpd::ApiClient: Obj {
     ApiClient *next, **pprevnext;
 
     Fd sock;
-    Fd inmsg_fd;
+    Fds inmsg_fds;
     Fd outmsg_fd;
 
     uint32_t inmsg_length = 0;
@@ -226,7 +226,7 @@ void Gtpd::api_client_state_machine(ApiClient *client, int s) {
                    std::min<decltype(client->inmsg_length)>(
                        client->inmsg.length, sizeof(client->inmsg_buf))) {
 
-                ssize_t rc; std::tie(rc, client->inmsg_fd) = api_sock_recv(
+                ssize_t rc; std::tie(rc, client->inmsg_fds) = api_sock_recv(
                     client->sock,
                     client->inmsg_buf + client->inmsg_length,
                     sizeof(client->inmsg_buf) - client->inmsg_length,
@@ -263,7 +263,7 @@ void Gtpd::api_client_state_machine(ApiClient *client, int s) {
                             client->sock,
                             client->outmsg_buf + client->outmsg_offset,
                             client->outmsg.length - client->outmsg_offset,
-                            client->outmsg_fd,
+                            FdPtrs{ &client->outmsg_fd },
                             MSG_NOSIGNAL
                         )) && errno == EAGAIN
                     ) {
@@ -284,7 +284,7 @@ void Gtpd::api_client_state_machine(ApiClient *client, int s) {
                 }
             } while (api_client_serve_cont(client));
 
-            client->inmsg_fd = Fd();
+            client->inmsg_fds = Fds();
 
             client->inmsg_length -= client->inmsg.length;
             memmove(client->inmsg_buf, client->inmsg_buf + client->inmsg.length,
@@ -342,7 +342,7 @@ void Gtpd::api_client_serve(ApiClient *client) {
                 std::tie(id, client->outmsg_fd) = core.create_tunnel(
                     GtpuTunnel(msg.tunnel), InnerProto(msg.inner_proto),
                     Cookie(msg.cookie),
-                    std::move(client->inmsg_fd)
+                    std::move(client->inmsg_fds[0])
                 );
                 resp.rc = uint32_t(id);
             }
