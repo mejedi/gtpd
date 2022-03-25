@@ -4,46 +4,7 @@
 #include <sys/signalfd.h>
 #include <cassert>
 
-// Store pointer combined with type id in low bits in
-// epoll_event::data::u64.
-enum ObjType {
-    OBJ_STOP_SIGNAL = 1,
-    OBJ_SERVER_SOCK = 2,
-    OBJ_API_SOCK = 3,
-    OBJ_API_CLIENT_SOCK_RECV = 4,
-    OBJ_API_CLIENT_SOCK_SEND = 5,
-    OBJ_SESS_LEADER = 6,
-
-    OBJ_TYPE_MAX,
-    OBJ_ALIGN_MIN = 8,
-};
-static_assert(OBJ_ALIGN_MIN >= OBJ_TYPE_MAX);
-
-struct alignas(OBJ_ALIGN_MIN) Obj {};
-
-static uint64_t encode_obj(ObjType t, Obj *o) {
-    auto u = reinterpret_cast<uint64_t>(o);
-    assert((u & (decltype(u)(1) * OBJ_ALIGN_MIN - 1)) == 0);
-    return t | u;
-}
-
-static ObjType decode_type(uint64_t u) {
-    return static_cast<ObjType>(u & (decltype(u)(1) * OBJ_ALIGN_MIN - 1));
-}
-
-static Obj *decode_obj(uint64_t u) {
-    return reinterpret_cast<Obj *>(u & ~(decltype(u)(1) * OBJ_ALIGN_MIN - 1));
-}
-
-static uint64_t encode_uint(ObjType t, unsigned i) {
-    return t | (static_cast<uint64_t>(i) * OBJ_ALIGN_MIN);
-}
-
-static unsigned decode_uint(uint64_t u) {
-    return static_cast<unsigned>(u / OBJ_ALIGN_MIN);
-}
-
-struct Gtpd::ApiClient: Obj {
+struct Gtpd::ApiClient {
     ApiClient *next, **pprevnext;
 
     Fd sock;
@@ -65,6 +26,64 @@ struct Gtpd::ApiClient: Obj {
         uint8_t outmsg_buf[sizeof(outmsg)];
     };
 };
+
+enum class WatcherType {
+    TERM_SIGNAL = 1,
+    SERVER_SOCK = 2,
+    API_SOCK = 3,
+    API_CLIENT_SOCK_RECV = 4,
+    API_CLIENT_SOCK_SEND = 5,
+    SESS_LEADER = 6,
+
+    MAX,
+};
+static constexpr int PTR_ALIGN_MIN = 8;
+static_assert(PTR_ALIGN_MIN >= int(WatcherType::MAX));
+
+struct Gtpd::WatcherInfo {
+    WatcherType type;
+    union {
+        int fd;
+        GtpuTunnelId id;
+        Gtpd::ApiClient *client;
+
+        uint32_t u32_;
+        uintptr_t uptr_;
+    };
+};
+
+epoll_data_t encode(Gtpd::WatcherInfo info) {
+    switch (info.type) {
+    case WatcherType::SERVER_SOCK:
+    case WatcherType::SESS_LEADER:
+        static_assert(sizeof(info.fd) == sizeof(info.u32_));
+        static_assert(sizeof(info.id) == sizeof(info.u32_));
+        return { .u64 = uint64_t(info.type) | (PTR_ALIGN_MIN * uint64_t(info.u32_)) };
+    case WatcherType::API_CLIENT_SOCK_RECV:
+    case WatcherType::API_CLIENT_SOCK_SEND:
+        static_assert(sizeof(info.client) == sizeof(info.uptr_));
+        static_assert(alignof(Gtpd::ApiClient) >= PTR_ALIGN_MIN);
+        assert((info.uptr_ & (PTR_ALIGN_MIN - 1)) == 0);
+        return { .u64 = uint64_t(info.type) | info.uptr_ };
+    default:
+        return { .u64 = uint64_t(info.type) };
+    }
+}
+
+Gtpd::WatcherInfo decode(Gtpd::WatcherInfo, epoll_data_t data) {
+    constexpr uintptr_t M = PTR_ALIGN_MIN - 1;
+    auto t = WatcherType(data.u64 & M);
+    switch (t) {
+    case WatcherType::SERVER_SOCK:
+    case WatcherType::SESS_LEADER:
+        return { .type = t, .u32_ = uint32_t(data.u64 / PTR_ALIGN_MIN) };
+    case WatcherType::API_CLIENT_SOCK_RECV:
+    case WatcherType::API_CLIENT_SOCK_SEND:
+        return { .type = t, .uptr_ = data.u64 & ~M };
+    default:
+        return { .type = t };
+    }
+}
 
 static Fd api_sock(const sockaddr_un &addr, int backlog) {
     Fd fd(socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0));
@@ -101,13 +120,7 @@ Gtpd::Gtpd(const Options &opts)
     : api_sock(Fd(opts.api_sock_fd), opts.api_sock_path, opts.api_sock_backlog),
       core(this, opts) {
 
-    epoll = Fd(epoll_create1(EPOLL_CLOEXEC));
-    if (!epoll) {
-        throw std::system_error(errno, std::generic_category(),
-                                "epoll_create");
-    }
-
-    add_watcher(api_sock.sock, encode_uint(OBJ_API_SOCK, 0), EPOLLIN);
+    epoll.add_watcher({ api_sock.sock, EPOLLIN, WatcherInfo{ .type = WatcherType::API_SOCK } });
 
     signalfd = Fd(::signalfd(-1, &opts.stop_sig, SFD_CLOEXEC));
     if (!signalfd) {
@@ -115,7 +128,7 @@ Gtpd::Gtpd(const Options &opts)
                                 "signalfd");
     }
 
-    add_watcher(signalfd, encode_uint(OBJ_STOP_SIGNAL, 0), EPOLLIN);
+    epoll.add_watcher({ signalfd, EPOLLIN, WatcherInfo{ .type = WatcherType::TERM_SIGNAL } });
 
     if (opts.enable_ip) enable(AF::INET);
     if (opts.enable_ip6) enable(AF::INET6);
@@ -146,8 +159,10 @@ void Gtpd::enable(AF address_family) {
     }
 
 #if 0
-    add_watcher(server_sock,
-                encode_uint(OBJ_SERVER_SOCK, server_sock.get()), EPOLLIN);
+    epoll.add_watcher({
+        server_sock, EPOLLIN,
+        WatcherInfo{ .type = WatcherType::SERVER_SOCK, .fd = server_sock.get() }
+    });
 #endif
 }
 
@@ -162,26 +177,25 @@ Gtpd::~Gtpd() {
 
 void Gtpd::run() {
     for (;;) {
-        epoll_event evt = {};
-        if (epoll_wait(epoll.get(), &evt, 1, -1) != 1) {
+        EpollEvent<WatcherInfo> event;
+        if (epoll.pwait(&event, 1, -1) != 1) {
             continue;
         }
-        ApiClient *client;
-        switch (decode_type(evt.data.u64)) {
-        case OBJ_STOP_SIGNAL: return;
-        case OBJ_SERVER_SOCK:
-            server_sock_recv(decode_uint(evt.data.u64));
+        auto info = event.data();
+        switch (info.type) {
+        case WatcherType::TERM_SIGNAL: return;
+        case WatcherType::SERVER_SOCK:
+            server_sock_recv(info.fd);
             break;
-        case OBJ_API_SOCK:
+        case WatcherType::API_SOCK:
             api_sock_accept();
             break;
-        case OBJ_API_CLIENT_SOCK_RECV:
-        case OBJ_API_CLIENT_SOCK_SEND:
-            client = static_cast<ApiClient *>(decode_obj(evt.data.u64));
-            api_client_state_machine(client, decode_type(evt.data.u64));
+        case WatcherType::API_CLIENT_SOCK_RECV:
+        case WatcherType::API_CLIENT_SOCK_SEND:
+            api_client_state_machine(info.client, int(info.type));
             break;
-        case OBJ_SESS_LEADER:
-            core.delete_tunnel(GtpuTunnelId(decode_uint(evt.data.u64)));
+        case WatcherType::SESS_LEADER:
+            core.delete_tunnel(info.id);
             break;
         default:
             break;
@@ -198,8 +212,10 @@ void Gtpd::api_sock_accept() {
     if (!sock) return;
     try {
         auto client = std::make_unique<ApiClient>();
-        add_watcher(sock, encode_obj(OBJ_API_CLIENT_SOCK_RECV, client.get()),
-                    EPOLLIN | EPOLLONESHOT);
+        epoll.add_watcher({
+            sock, EPOLLIN | EPOLLONESHOT,
+            WatcherInfo{ .type = WatcherType::API_CLIENT_SOCK_RECV, .client = client.get() }
+        });
         client->sock = std::move(sock);
         client->pprevnext = &api_client;
         client->next = api_client;
@@ -224,7 +240,7 @@ void Gtpd::api_client_state_machine(ApiClient *client, int s) {
     switch (s) {
         for (;;) {
 
-    case OBJ_API_CLIENT_SOCK_RECV:
+    case int(WatcherType::API_CLIENT_SOCK_RECV):
             while (client->inmsg_length < len_min ||
                    client->inmsg_length <
                    std::min<decltype(client->inmsg_length)>(
@@ -239,9 +255,10 @@ void Gtpd::api_client_state_machine(ApiClient *client, int s) {
 
                 if (rc <= 0) {
                     if (rc == -1 && errno == EAGAIN) {
-                        modify_watcher(client->sock,
-                                       encode_obj(OBJ_API_CLIENT_SOCK_RECV, client),
-                                       EPOLLIN | EPOLLONESHOT);
+                        epoll.modify_watcher({
+                            client->sock, EPOLLIN | EPOLLONESHOT,
+                            WatcherInfo{ .type = WatcherType::API_CLIENT_SOCK_RECV, .client = client }
+                        });
                     } else {
                         api_client_terminate(client);
                     }
@@ -260,7 +277,7 @@ void Gtpd::api_client_state_machine(ApiClient *client, int s) {
             do {
                 client->outmsg_offset = 0;
 
-    case OBJ_API_CLIENT_SOCK_SEND:
+    case int(WatcherType::API_CLIENT_SOCK_SEND):
                 while (client->outmsg_offset != client->outmsg.length) {
                     ssize_t rc;
                     if (--send_limit == 0 || -1 == (rc = api_sock_send(
@@ -271,10 +288,10 @@ void Gtpd::api_client_state_machine(ApiClient *client, int s) {
                             MSG_NOSIGNAL
                         )) && errno == EAGAIN
                     ) {
-                        modify_watcher(client->sock,
-                                       encode_obj(OBJ_API_CLIENT_SOCK_SEND,
-                                                  client),
-                                       EPOLLOUT | EPOLLONESHOT);
+                        epoll.modify_watcher({
+                            client->sock, EPOLLOUT | EPOLLONESHOT,
+                            WatcherInfo{ .type = WatcherType::API_CLIENT_SOCK_SEND, .client = client }
+                        });
                         return;
                     }
 
@@ -421,12 +438,15 @@ void Gtpd::api_client_serve(ApiClient *client) {
 
 void Gtpd::register_session_leader(GtpuTunnelId tunnel_id, const Fd &pidfd) {
     if (!pidfd) return;
-    add_watcher(pidfd, encode_uint(OBJ_SESS_LEADER, uint32_t(tunnel_id)), EPOLLIN);
+    epoll.add_watcher({
+        pidfd, EPOLLIN,
+        WatcherInfo{ .type = WatcherType::SESS_LEADER, .id = tunnel_id }
+    });
 }
 
 void Gtpd::unregister_session_leader(const Fd &pidfd) {
     if (!pidfd) return;
-    delete_watcher(pidfd);
+    epoll.delete_watcher({ pidfd });
 }
 
 bool Gtpd::api_client_serve_cont(ApiClient *client) {
@@ -438,31 +458,4 @@ bool Gtpd::api_client_serve_cont(ApiClient *client) {
         return true;
     }
     return false;
-}
-
-void Gtpd::add_watcher(const Fd &fd, uint64_t data, int events) {
-    epoll_event evt = {};
-    evt.events = events;
-    evt.data.u64 = data;
-    if (epoll_ctl(epoll.get(), EPOLL_CTL_ADD, fd.get(), &evt) != 0) {
-        throw std::system_error(errno, std::generic_category(),
-                                "epoll_ctl(APOLL_CTL_ADD)");
-    }
-}
-
-void Gtpd::modify_watcher(const Fd &fd, uint64_t data, int events) {
-    epoll_event evt = {};
-    evt.events = events;
-    evt.data.u64 = data;
-    if (epoll_ctl(epoll.get(), EPOLL_CTL_MOD, fd.get(), &evt) != 0) {
-        throw std::system_error(errno, std::generic_category(),
-                                "epoll_ctl(APOLL_CTL_MOD)");
-    }
-}
-
-void Gtpd::delete_watcher(const Fd &fd) {
-    if (epoll_ctl(epoll.get(), EPOLL_CTL_DEL, fd.get(), nullptr) != 0) {
-        throw std::system_error(errno, std::generic_category(),
-                                "epoll_ctl(APOLL_CTL_DEL)");
-    }
 }

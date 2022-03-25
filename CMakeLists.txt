@@ -12,6 +12,7 @@ add_library(gtpd_common STATIC
 
 add_executable(gtpd
     gtpd/bpf.cpp
+    gtpd/epoll.cpp
     gtpd/gtpd.cpp
     gtpd/gtpd_core.cpp
     gtpd/gtpu_pipe.cpp

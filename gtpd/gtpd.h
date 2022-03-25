@@ -1,5 +1,6 @@
 #pragma once
 #include "gtpd_core.h"
+#include "epoll.h"
 #include <sys/socket.h>
 #include <sys/un.h>
 
@@ -42,9 +43,10 @@ private:
     };
 
     struct ApiClient;
+    struct WatcherInfo;
 
 private:
-    Fd epoll;
+    Epoll<WatcherInfo> epoll;
     Fd signalfd;
 
     Fd server_sock, server_sock6;
@@ -81,10 +83,6 @@ private:
         __builtin_unreachable();
     }
 
-    void add_watcher(const Fd &fd, uint64_t data, int events);
-    void modify_watcher(const Fd &fd, uint64_t data, int events);
-    void delete_watcher(const Fd &fd);
-
     GtpuTunnelDispatcher *tunnel_dispatcher(AF address_family) noexcept override {
         return tunnel_dispatcher_ref(address_family).get();
     }
@@ -108,4 +106,7 @@ private:
     void api_client_state_machine(ApiClient *client, int s);
     void api_client_serve(ApiClient *client);
     bool api_client_serve_cont(ApiClient *client);
+
+    friend epoll_data_t encode(WatcherInfo);
+    friend WatcherInfo decode(WatcherInfo, epoll_data_t);
 };

@@ -1,6 +1,7 @@
 #pragma once
 #include "gtpu_tunnel.h"
 #include "gtpu_pipe.h"
+#include "epoll.h"
 #include <atomic>
 #include <condition_variable>
 #include <unordered_map>
@@ -45,7 +46,7 @@ public:
 private:
     enum class Interrupt;
     struct Worker;
-    struct Watcher;
+    struct WatcherInfo;
     struct Session;
 
     Session &session_by_id(GtpuTunnelId id);
@@ -53,7 +54,7 @@ private:
 private:
     Delegate * const delegate;
     const Options options;
-    const Fd epoll;
+    Epoll<WatcherInfo> epoll;
     std::vector<std::unique_ptr<Session>> sessions;
     std::unordered_map<std::u32string_view, Session *> session_by_key;
     std::vector<Worker> workers;
@@ -74,16 +75,13 @@ private:
         delegate->tunnel_dispatcher(tunnel.address_family())->unregister_tunnel(tunnel);
     }
 
-    int watcher_epoll_ctl(int op, Watcher);
-
-    void add_watcher(Watcher);
-    void delete_watcher(Watcher) noexcept;
-    void update_watcher(Watcher) noexcept;
-
     void worker_proc(Worker &);
     void interrupt_workers(Interrupt);
     void sync_with_workers();
     void stop_workers();
 
     void modify_session_socket_and_bpf_maps(Session &sess, const GtpuTunnel &new_tunnel);
+
+    friend epoll_data_t encode(WatcherInfo);
+    friend WatcherInfo decode(WatcherInfo, epoll_data_t);
 };
