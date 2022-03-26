@@ -98,7 +98,7 @@ static Fd api_sock(const sockaddr_un &addr, int backlog) {
 
 Gtpd::ApiSock::ApiSock(Fd fd, std::string_view path, int backlog) {
     if (fd) {
-        addr.sun_family = 0;
+        assert(addr.sun_family == 0);
         sock = std::move(fd);
         return;
     }
@@ -106,6 +106,7 @@ Gtpd::ApiSock::ApiSock(Fd fd, std::string_view path, int backlog) {
         throw std::runtime_error("API socket path too long");
     addr.sun_family = AF_UNIX;
     memcpy(addr.sun_path, path.data(), path.size());
+    assert(addr.sun_path[path.size()] == 0);
 
     sock = ::api_sock(addr, backlog);
     if (!sock) throw std::system_error(errno, std::generic_category(),
