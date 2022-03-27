@@ -383,6 +383,9 @@ GtpdCore::GtpdCore(Delegate *delegate, const Options &opts)
         w.thread = std::thread([this, &w] () {
             worker_proc(w);
         });
+        char tname[16];
+        snprintf(tname, sizeof(tname), "gtpd.wk.%d", int(&w - &workers[0]));
+        pthread_setname_np(w.thread.native_handle(), tname);
     }
 }
 
