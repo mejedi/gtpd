@@ -23,10 +23,10 @@ struct EpollWatcherInfo {
     EpollWatcherInfo(const Fd& fd, uint32_t events = 0, WatcherData data = {})
         : fd(fd.get()), events(events), data(data) {}
 
-    EpollWatcherInfo disable() const { return { fd }; }
+    EpollWatcherInfo disable() const { return { fd, data }; }
 
 private:
-    EpollWatcherInfo(int fd): fd(fd), events(0) {}
+    EpollWatcherInfo(int fd, WatcherData data): fd(fd), events(0), data(data) {}
 };
 
 template<typename WatcherData>

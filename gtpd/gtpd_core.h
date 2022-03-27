@@ -54,10 +54,10 @@ private:
 private:
     Delegate * const delegate;
     const Options options;
-    Epoll<WatcherInfo> epoll;
     std::vector<std::unique_ptr<Session>> sessions;
     std::unordered_map<std::u32string_view, Session *> session_by_key;
     std::vector<Worker> workers;
+    int next_worker_index = 0;
 
     struct {
         std::atomic<int> counter = 0;
@@ -76,11 +76,23 @@ private:
     }
 
     void worker_proc(Worker &);
-    void interrupt_workers(Interrupt);
-    void sync_with_workers();
+
+    void sync_with_workers(const Session &);
     void stop_workers();
 
+    template<typename Pred>
+    void interrupt_workers(Interrupt, const Pred &);
+
     void modify_session_socket_and_bpf_maps(Session &sess, const GtpuTunnel &new_tunnel);
+
+    Epoll<WatcherInfo> &epoll_by_watcher_info(WatcherInfo data);
+    void add_watcher(const EpollWatcherInfo<WatcherInfo> &wi);
+    void delete_watcher(const EpollWatcherInfo<WatcherInfo> &wi);
+    void modify_watcher(const EpollWatcherInfo<WatcherInfo> &wi);
+
+    int next_worker_index_round_robin() {
+        return (next_worker_index++) % options.nworkers;
+    }
 
     friend epoll_data_t encode(WatcherInfo);
     friend WatcherInfo decode(WatcherInfo, epoll_data_t);

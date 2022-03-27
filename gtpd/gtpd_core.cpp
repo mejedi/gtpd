@@ -30,12 +30,14 @@ enum class GtpdCore::Interrupt { NONE, SYNC, EXIT };
 
 struct GtpdCore::Worker {
     std::atomic<Interrupt> interrupt = Interrupt::NONE;
+    Epoll<WatcherInfo> epoll;
     std::thread thread;
 };
 
 struct GtpdCore::Session {
-    std::atomic_bool enable = true;
     std::atomic_int halt = 0;
+    int encap_worker_index = -1;
+    int decap_worker_index = -1;
     SocketRegistration net_sock_reg;
     Fd session_leader_pidfd;
     GtpuPipe pipe;
@@ -106,6 +108,9 @@ GtpdCore::create_tunnel(GtpuTunnel tunnel, InnerProto inner_proto,
                                        options,
                                        std::move(bpf_state));
 
+    p->encap_worker_index = next_worker_index_round_robin();
+    p->decap_worker_index = next_worker_index_round_robin();;
+
     p->session_leader_pidfd = std::move(session_leader_pidfd);
     delegate->register_session_leader(GtpuTunnelId(id), p->session_leader_pidfd);
     on_failure unregister_session_leader([this, &p] () {
@@ -127,12 +132,12 @@ GtpdCore::create_tunnel(GtpuTunnel tunnel, InnerProto inner_proto,
     //
     // However don't enable yet, as we might be racing with a worker on
     // failure otherwise.
-    epoll.add_watcher(p->net_sock_watcher().disable());
+    add_watcher(p->net_sock_watcher().disable());
 
-    epoll.add_watcher(p->xdp_sock_watcher());
+    add_watcher(p->xdp_sock_watcher());
 
     // Finally, enable net_sock_watcher (nothrow).
-    epoll.modify_watcher(p->net_sock_watcher());
+    modify_watcher(p->net_sock_watcher());
 
     // It's important that we didn't "publish" it earlier.
     // Otherwise register_tunnel() might attempt to double register.
@@ -143,9 +148,9 @@ GtpdCore::create_tunnel(GtpuTunnel tunnel, InnerProto inner_proto,
 
 void GtpdCore::delete_tunnel(GtpuTunnelId id) {
     auto &sess = session_by_id(id);
-    epoll.delete_watcher(sess.net_sock_watcher());
-    epoll.delete_watcher(sess.xdp_sock_watcher());
-    sync_with_workers();
+    delete_watcher(sess.net_sock_watcher());
+    delete_watcher(sess.xdp_sock_watcher());
+    sync_with_workers(sess);
     session_by_key.erase(sess.pipe.tunnel().key());
     unregister_tunnel(sess.pipe.tunnel());
     delegate->unregister_session_leader(sess.session_leader_pidfd);
@@ -159,16 +164,14 @@ void GtpdCore::modify_tunnel(GtpuTunnelId id,
 
     ensure_address_family_enabled(new_tunnel.address_family());
 
-    sess.enable.store(false, std::memory_order_relaxed);
+    modify_watcher(sess.net_sock_watcher().disable());
+    modify_watcher(sess.xdp_sock_watcher().disable());
     on_scope_exit enable_session([this, &sess] () {
-        sess.enable.store(true, std::memory_order_release);
-        epoll.modify_watcher(sess.net_sock_watcher());
-        epoll.modify_watcher(sess.xdp_sock_watcher());
+        modify_watcher(sess.net_sock_watcher());
+        modify_watcher(sess.xdp_sock_watcher());
     });
-    sync_with_workers();
-    // From now on the session is not accessed concurrently (except for enable field).
-    // Unlike delete_session, we don't EPOLL_CTL_DEL as we might
-    // be unable to add it back (EPOLL_CTL_ADD allocates memory).
+    sync_with_workers(sess);
+    // From now on the session is not accessed concurrently.
 
     if (sess.pipe.tunnel().key() == new_tunnel.key()) {
         modify_session_socket_and_bpf_maps(sess, new_tunnel);
@@ -209,7 +212,9 @@ void GtpdCore::modify_session_socket_and_bpf_maps(Session &sess, const GtpuTunne
         }
     } else {
         auto sock = gtpu_socket(address_family);
-        epoll.add_watcher({ sock });
+        add_watcher({
+            sock, 0, WatcherInfo{ .type = WatcherType::NET_SOCK, .sess = &sess }
+        });
 
         SocketRegistration sock_reg(sock);
         register_tunnel(new_tunnel, sock_reg);
@@ -265,14 +270,14 @@ void GtpdCore::register_tunnel(const GtpuTunnel &tunnel, const SocketRegistratio
 
 EpollWatcherInfo<GtpdCore::WatcherInfo> GtpdCore::Session::net_sock_watcher() {
     return {
-        pipe.net_sock(), EPOLLIN | EPOLLONESHOT,
+        pipe.net_sock(), EPOLLIN,
         GtpdCore::WatcherInfo{ WatcherType::NET_SOCK, this }
     };
 }
 
 EpollWatcherInfo<GtpdCore::WatcherInfo> GtpdCore::Session::xdp_sock_watcher() {
     return {
-        pipe.xdp_sock(), EPOLLIN | EPOLLONESHOT,
+        pipe.xdp_sock(), EPOLLIN,
         GtpdCore::WatcherInfo{ WatcherType::XDP_SOCK, this }
     };
 }
@@ -283,31 +288,27 @@ void GtpdCore::worker_proc(Worker &w) {
         // Can't tell whether a signal was delivered, since epoll_pwait
         // doesn't check for pending signals if some events are ready.
         // Doesn't matter as we check for interrupts unconditionally.
-        if (epoll.pwait(&event, 1, -1, &sigset_initial) == 1) {
+        if (w.epoll.pwait(&event, 1, -1, &sigset_initial) == 1) {
             auto info = event.data();
-            if (__builtin_expect(info.sess->enable.load(std::memory_order_acquire), true)) {
-                switch (info.type) {
-                case WatcherType::NET_SOCK:
-                    // .do_decap() returning non-zero halt code indicates
-                    // that there's something seriously wrong with the
-                    // session.  It's unsafe to serve it any further as
-                    // the socket is most likely still ready and we'll
-                    // busy-loop forever.
-                    if (int halt = info.sess->pipe.do_decap()) {
-                        info.sess->halt.store(halt, std::memory_order_relaxed);
-                    } else {
-                        epoll.modify_watcher_if_exists(info.sess->net_sock_watcher());
-                    }
-                    break;
-                case WatcherType::XDP_SOCK:
-                    // See above.
-                    if (int halt = info.sess->pipe.do_encap()) {
-                        info.sess->halt.store(halt, std::memory_order_relaxed);
-                    } else {
-                        epoll.modify_watcher_if_exists(info.sess->xdp_sock_watcher());
-                    }
-                    break;
+            switch (info.type) {
+            case WatcherType::NET_SOCK:
+                // .do_decap() returning non-zero halt code indicates
+                // that there's something seriously wrong with the
+                // session.  It's unsafe to serve it any further as
+                // the socket is most likely still ready and we'll
+                // busy-loop forever.
+                if (int halt = info.sess->pipe.do_decap()) {
+                    info.sess->halt.store(halt, std::memory_order_relaxed);
+                    w.epoll.modify_watcher_if_exists(info.sess->net_sock_watcher().disable());
                 }
+                break;
+            case WatcherType::XDP_SOCK:
+                // See above.
+                if (int halt = info.sess->pipe.do_encap()) {
+                    info.sess->halt.store(halt, std::memory_order_relaxed);
+                    w.epoll.modify_watcher_if_exists(info.sess->xdp_sock_watcher().disable());
+                }
+                break;
             }
         }
         auto interrupt = w.interrupt.load(std::memory_order_acquire);
@@ -323,25 +324,31 @@ void GtpdCore::worker_proc(Worker &w) {
     }
 }
 
-void GtpdCore::sync_with_workers() {
-    interrupt_workers(Interrupt::SYNC);
+void GtpdCore::sync_with_workers(const Session &sess) {
+    auto is_session_host = [this, &sess] (const Worker &w) {
+        return &w == &workers[sess.encap_worker_index]
+               || &w == &workers[sess.decap_worker_index];
+    };
+    interrupt_workers(Interrupt::SYNC, is_session_host);
     std::unique_lock lock(interrupt_barrier.mutex);
     while (interrupt_barrier.counter.load(std::memory_order_relaxed) != 0)
         interrupt_barrier.cv.wait(lock);
 }
 
-void GtpdCore::interrupt_workers(Interrupt interrupt) {
+template<typename Pred>
+void GtpdCore::interrupt_workers(Interrupt interrupt, const Pred& pred) {
     int num_active = 0;
     for (const auto &w: workers) {
-        if (w.thread.joinable()) ++num_active;
+        if (!pred(w)) continue;
+        ++num_active;
     }
     interrupt_barrier.counter.store(num_active, std::memory_order_relaxed);
     for (auto &w: workers) {
-        if (!w.thread.joinable()) continue;
+        if (!pred(w)) continue;
         w.interrupt.store(interrupt, std::memory_order_release);
     }
     for (auto &w: workers) {
-        if (!w.thread.joinable()) continue;
+        if (!pred(w)) continue;
         // If workers are active signal might be unnecessary.
         if (interrupt_barrier.counter.load(std::memory_order_relaxed) == 0) return;
         if (auto err = pthread_kill(w.thread.native_handle(), options.interrupt_sig)) {
@@ -352,7 +359,8 @@ void GtpdCore::interrupt_workers(Interrupt interrupt) {
 }
 
 void GtpdCore::stop_workers() {
-    interrupt_workers(Interrupt::EXIT);
+    auto is_joinable = [] (const Worker &w) { return w.thread.joinable(); };
+    interrupt_workers(Interrupt::EXIT, is_joinable);
     for (auto &w: workers) {
         if (w.thread.joinable()) w.thread.join();
     }
@@ -391,4 +399,26 @@ GtpdCore::GtpdCore(Delegate *delegate, const Options &opts)
 
 GtpdCore::~GtpdCore() {
     stop_workers();
+}
+
+Epoll<GtpdCore::WatcherInfo> &GtpdCore::epoll_by_watcher_info(WatcherInfo info) {
+    assert(info.type == WatcherType::NET_SOCK || info.type == WatcherType::XDP_SOCK);
+    auto worker_index = (
+        info.type == WatcherType::NET_SOCK
+        ? info.sess->decap_worker_index : info.sess->encap_worker_index
+    );
+    assert(worker_index >= 0);
+    return workers[worker_index].epoll;
+}
+
+void GtpdCore::add_watcher(const EpollWatcherInfo<WatcherInfo> &wi) {
+    epoll_by_watcher_info(wi.data).add_watcher(wi);
+}
+
+void GtpdCore::delete_watcher(const EpollWatcherInfo<WatcherInfo> &wi) {
+    epoll_by_watcher_info(wi.data).delete_watcher(wi);
+}
+
+void GtpdCore::modify_watcher(const EpollWatcherInfo<WatcherInfo> &wi) {
+    epoll_by_watcher_info(wi.data).modify_watcher(wi);
 }
