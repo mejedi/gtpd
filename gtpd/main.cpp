@@ -1,5 +1,6 @@
 #include "gtpd.h"
 #include "gtpu_pipe.h"
+#include "common/version.h"
 #include <getopt.h>
 #include <systemd/sd-daemon.h>
 
@@ -13,7 +14,7 @@ int main(int argc, char **argv, char **envp) {
         default:
             return EXIT_FAILURE;
         case 'v':
-            printf("gtpd %s\n", "%GTPD_VERSION%");
+            printf("gtpd %s\n", version);
             return EXIT_SUCCESS;
         case 'h':
             printf(

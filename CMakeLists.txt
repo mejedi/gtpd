@@ -8,6 +8,12 @@ set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 
 add_library(gtpd_common STATIC
     common/api_sock_io.cpp
+    common/version.cpp
+)
+add_custom_command(
+    OUTPUT common/version.cpp hack_missing_file_to_make_it_run_every_build
+    DEPENDS gen_version.sh
+    COMMAND "${CMAKE_SOURCE_DIR}/gen_version.sh" common/version.cpp
 )
 
 add_executable(gtpd
