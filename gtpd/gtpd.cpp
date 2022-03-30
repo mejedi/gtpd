@@ -27,6 +27,7 @@ struct Gtpd::ApiClient {
     };
 };
 
+namespace {
 enum class WatcherType {
     TERM_SIGNAL = 1,
     SERVER_SOCK = 2,
@@ -37,11 +38,12 @@ enum class WatcherType {
 
     MAX,
 };
+}
 static constexpr int PTR_ALIGN_MIN = 8;
 static_assert(PTR_ALIGN_MIN >= int(WatcherType::MAX));
 
 struct Gtpd::WatcherInfo {
-    WatcherType type;
+    WatcherType type = WatcherType(0);
     union {
         int fd;
         GtpuTunnelId id;
@@ -178,28 +180,26 @@ Gtpd::~Gtpd() {
 
 void Gtpd::run() {
     for (;;) {
-        EpollEvent<WatcherInfo> event;
-        if (epoll.pwait(&event, 1, -1) != 1) {
-            continue;
-        }
-        auto info = event.data();
-        switch (info.type) {
-        case WatcherType::TERM_SIGNAL: return;
-        case WatcherType::SERVER_SOCK:
-            server_sock_recv(info.fd);
-            break;
-        case WatcherType::API_SOCK:
-            api_sock_accept();
-            break;
-        case WatcherType::API_CLIENT_SOCK_RECV:
-        case WatcherType::API_CLIENT_SOCK_SEND:
-            api_client_state_machine(info.client, int(info.type));
-            break;
-        case WatcherType::SESS_LEADER:
-            core.delete_tunnel(info.id);
-            break;
-        default:
-            break;
+        for (const auto &event: epoll.pwait(events.data(), events.size(), -1)) {
+            auto info = event.data();
+            switch (info.type) {
+            case WatcherType::TERM_SIGNAL: return;
+            case WatcherType::SERVER_SOCK:
+                server_sock_recv(info.fd);
+                break;
+            case WatcherType::API_SOCK:
+                api_sock_accept();
+                break;
+            case WatcherType::API_CLIENT_SOCK_RECV:
+            case WatcherType::API_CLIENT_SOCK_SEND:
+                api_client_state_machine(info.client, int(info.type));
+                break;
+            case WatcherType::SESS_LEADER:
+                core.delete_tunnel(info.id);
+                break;
+            default:
+                break;
+            }
         }
     }
 }
@@ -445,9 +445,13 @@ void Gtpd::register_session_leader(GtpuTunnelId tunnel_id, const Fd &pidfd) {
     });
 }
 
-void Gtpd::unregister_session_leader(const Fd &pidfd) {
+void Gtpd::unregister_session_leader(GtpuTunnelId tunnel_id, const Fd &pidfd) {
     if (!pidfd) return;
     epoll.delete_watcher({ pidfd });
+    clear_pending_events(
+        events.begin(), events.end(),
+        WatcherInfo{ .type = WatcherType::SESS_LEADER, .id = tunnel_id }
+    );
 }
 
 bool Gtpd::api_client_serve_cont(ApiClient *client) {

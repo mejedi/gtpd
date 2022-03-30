@@ -58,6 +58,8 @@ private:
 
     GtpdCore core;
 
+    std::array<EpollEvent<WatcherInfo>, 16> events;
+
 private:
     std::unique_ptr<GtpuTunnelDispatcher> &tunnel_dispatcher_ref(AF address_family) {
         switch (address_family) {
@@ -96,7 +98,7 @@ private:
     }
 
     void register_session_leader(GtpuTunnelId, const Fd &) override;
-    void unregister_session_leader(const Fd &) override;
+    void unregister_session_leader(GtpuTunnelId, const Fd &) override;
 
     void enable(AF address_family);
 

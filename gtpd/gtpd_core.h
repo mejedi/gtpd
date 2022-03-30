@@ -20,7 +20,7 @@ public:
                                                std::unique_ptr<GtpuTunnelDispatcher>) = 0;
 
         virtual void register_session_leader(GtpuTunnelId, const Fd &) = 0;
-        virtual void unregister_session_leader(const Fd &) = 0;
+        virtual void unregister_session_leader(GtpuTunnelId, const Fd &) = 0;
     };
 
     std::pair<GtpuTunnelId, Fd> create_tunnel(GtpuTunnel, InnerProto,

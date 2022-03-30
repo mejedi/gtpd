@@ -55,17 +55,19 @@ struct GtpdCore::Session {
     EpollWatcherInfo<WatcherInfo> xdp_sock_watcher();
 };
 
+namespace{
 enum class WatcherType {
     NET_SOCK = 1,
     XDP_SOCK = 2,
 
     MAX
 };
+}
 static constexpr int PTR_ALIGN_MIN = 4;
 static_assert(int(WatcherType::MAX) <= PTR_ALIGN_MIN);
 
 struct GtpdCore::WatcherInfo {
-    WatcherType type;
+    WatcherType type = WatcherType(0);
     GtpdCore::Session *sess;
 };
 
@@ -113,8 +115,8 @@ GtpdCore::create_tunnel(GtpuTunnel tunnel, InnerProto inner_proto,
 
     p->session_leader_pidfd = std::move(session_leader_pidfd);
     delegate->register_session_leader(GtpuTunnelId(id), p->session_leader_pidfd);
-    on_failure unregister_session_leader([this, &p] () {
-        delegate->unregister_session_leader(p->session_leader_pidfd);
+    on_failure unregister_session_leader([this, id, &p] () {
+        delegate->unregister_session_leader(GtpuTunnelId(id), p->session_leader_pidfd);
     });
 
     auto key = p->pipe.tunnel().key();
@@ -153,7 +155,7 @@ void GtpdCore::delete_tunnel(GtpuTunnelId id) {
     sync_with_workers(sess);
     session_by_key.erase(sess.pipe.tunnel().key());
     unregister_tunnel(sess.pipe.tunnel());
-    delegate->unregister_session_leader(sess.session_leader_pidfd);
+    delegate->unregister_session_leader(id, sess.session_leader_pidfd);
     sessions[uint32_t(id)].reset();
 }
 
@@ -284,11 +286,12 @@ EpollWatcherInfo<GtpdCore::WatcherInfo> GtpdCore::Session::xdp_sock_watcher() {
 
 void GtpdCore::worker_proc(Worker &w) {
     for (;;) {
-        EpollEvent<WatcherInfo> event;
+        std::array<EpollEvent<WatcherInfo>, 16> events;
         // Can't tell whether a signal was delivered, since epoll_pwait
         // doesn't check for pending signals if some events are ready.
         // Doesn't matter as we check for interrupts unconditionally.
-        if (w.epoll.pwait(&event, 1, -1, &sigset_initial) == 1) {
+        for (const auto &event: w.epoll.pwait(events.data(), events.size(), -1, &sigset_initial)
+                                 .inject_event_if_interrupted()) {
             auto info = event.data();
             switch (info.type) {
             case WatcherType::NET_SOCK:
@@ -310,16 +313,20 @@ void GtpdCore::worker_proc(Worker &w) {
                 }
                 break;
             }
-        }
-        auto interrupt = w.interrupt.load(std::memory_order_acquire);
-        if (__builtin_expect(interrupt != Interrupt::NONE, false)) {
-            if (interrupt_barrier.counter.fetch_add(-1, std::memory_order_relaxed) == 1) {
-                // counter just dropped to 0 (fetch_add returns the old value)
-                std::unique_lock lock(interrupt_barrier.mutex);
-                interrupt_barrier.cv.notify_one();
+
+            // Check interrupt once every loop iteration to reduce latency.
+            auto interrupt = w.interrupt.load(std::memory_order_acquire);
+            if (__builtin_expect(interrupt != Interrupt::NONE, false)) {
+                w.interrupt.store(Interrupt::NONE, std::memory_order_release);
+                if (interrupt_barrier.counter.fetch_add(-1, std::memory_order_relaxed) == 1) {
+                    // counter just dropped to 0 (fetch_add returns the old value)
+                    std::unique_lock lock(interrupt_barrier.mutex);
+                    interrupt_barrier.cv.notify_one();
+                }
+                if (interrupt == Interrupt::EXIT) return;
+
+                break; // could've invalidated pending events
             }
-            w.interrupt.store(Interrupt::NONE, std::memory_order_release);
-            if (interrupt == Interrupt::EXIT) return;
         }
     }
 }
