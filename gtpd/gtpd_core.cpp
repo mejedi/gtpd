@@ -317,7 +317,7 @@ void GtpdCore::worker_proc(Worker &w) {
             // Check interrupt once every loop iteration to reduce latency.
             auto interrupt = w.interrupt.load(std::memory_order_acquire);
             if (__builtin_expect(interrupt != Interrupt::NONE, false)) {
-                w.interrupt.store(Interrupt::NONE, std::memory_order_release);
+                w.interrupt.store(Interrupt::NONE, std::memory_order_relaxed);
                 if (interrupt_barrier.counter.fetch_add(-1, std::memory_order_relaxed) == 1) {
                     // counter just dropped to 0 (fetch_add returns the old value)
                     std::unique_lock lock(interrupt_barrier.mutex);
@@ -357,7 +357,7 @@ void GtpdCore::interrupt_workers(Interrupt interrupt, const Pred& pred) {
     for (auto &w: workers) {
         if (!pred(w)) continue;
         // If workers are active signal might be unnecessary.
-        if (interrupt_barrier.counter.load(std::memory_order_relaxed) == 0) return;
+        if (w.interrupt.load(std::memory_order_relaxed) == Interrupt::NONE) continue;
         if (auto err = pthread_kill(w.thread.native_handle(), options.interrupt_sig)) {
             fprintf(stderr, "fatal: pthread_kill: %s\n", strerror(err));
             abort();
