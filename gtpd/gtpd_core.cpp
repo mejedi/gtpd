@@ -388,6 +388,7 @@ GtpdCore::GtpdCore(Delegate *delegate, const Options &opts)
     on_scope_exit restore_sigmask([&] () {
         if (auto err = pthread_sigmask(SIG_SETMASK, &sigset_initial, nullptr)) {
             fprintf(stderr, "fatal: pthread_sigmask: %s\n", strerror(err));
+            abort();
         }
     });
 

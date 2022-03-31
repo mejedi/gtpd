@@ -197,8 +197,6 @@ void Gtpd::run() {
             case WatcherType::SESS_LEADER:
                 core.delete_tunnel(info.id);
                 break;
-            default:
-                break;
             }
         }
     }
