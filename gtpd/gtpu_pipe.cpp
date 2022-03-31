@@ -48,8 +48,8 @@ const size_t CacheLineAligned::cache_line_size = sysconf(_SC_LEVEL1_DCACHE_LINES
 #endif
 
 struct BpfStateData {
-    volatile uint16_t inner_proto;
-    volatile uint64_t rx;
+    std::atomic<uint16_t> inner_proto;
+    std::atomic<uint64_t> rx;
 };
 
 GtpuPipe::BpfState::BpfState(): fd(bpf_create_map(
@@ -73,7 +73,7 @@ struct GtpuPipe::EncapState: CacheLineAligned {
     BpfStateData *bpf_state = nullptr;
 
     // Counters
-    volatile uint64_t ok = 0, drop_rx = 0, drop_tx = 0;
+    std::atomic<uint64_t> ok = 0, drop_rx = 0, drop_tx = 0;
 
     EncapState(const Fd &xdp,
                const Options &opts,
@@ -142,8 +142,8 @@ struct GtpuPipe::DecapState: CacheLineAligned {
     uint8_t cmsg_buf[CMSG_SPACE(sizeof(int))] alignas(cmsghdr);
 
     // Counters
-    volatile uint64_t ok = 0, drop_rx = 0, drop_tx = 0;
-    volatile uint64_t bad = 0, trunc = 0;
+    std::atomic<uint64_t> ok = 0, drop_rx = 0, drop_tx = 0;
+    std::atomic<uint64_t> bad = 0, trunc = 0;
 
     DecapState(const Fd &xdp,
                const Options &opts,
@@ -298,26 +298,26 @@ int GtpuPipe::do_encap() {
     }
     state->umem_fill.advance(n);
 
-    uint64_t ok = state->ok + std::max<ssize_t>(rc, 0);
-    uint64_t drop_tx = state->drop_tx + n - std::max<ssize_t>(rc, 0);
-    uint64_t drop_rx = state->drop_rx;
+    uint64_t ok = state->ok.load(std::memory_order_relaxed);
+    uint64_t drop_tx = state->drop_tx.load(std::memory_order_relaxed);
+    uint64_t drop_rx = state->drop_rx.load(std::memory_order_relaxed);
 
-    if (state->bpf_state) {
-        // A client might commit the following misdeads:
-        //   * Not use the BPF program we provide; bogus Rx values in packets;
-        //   * Not use our program; Rx counter in BPF state not updated.
-        // As the countermeasure, we ensure that the Rx value in packets
-        // are in the range [total number of packets so far, BPF state RX].
-        uint64_t rx_max = state->bpf_state->rx;
-        drop_rx = std::max(ok + drop_rx + drop_tx, std::min(rx, rx_max)) - ok - drop_tx;
-    }
+    ok += std::max<ssize_t>(rc, 0);
+    drop_tx += n - std::max<ssize_t>(rc, 0);
 
-    gtpd_encap_update(
-        cookie_,
-        state->ok = ok,
-        state->drop_rx = drop_rx,
-        state->drop_tx = drop_tx
-    );
+    // A client might commit the following misdeads:
+    //   * Not use the BPF program we provide; bogus Rx values in packets;
+    //   * Not use our program; Rx counter in BPF state not updated.
+    // As the countermeasure, we ensure that the Rx value in packets
+    // are in the range [total number of packets so far, BPF state RX].
+    uint64_t rx_max = state->bpf_state->rx.load(std::memory_order_relaxed);
+    drop_rx = std::max(ok + drop_rx + drop_tx, std::min(rx, rx_max)) - ok - drop_tx;
+
+    state->ok.store(ok, std::memory_order_relaxed);
+    state->drop_rx.store(drop_rx, std::memory_order_relaxed);
+    state->drop_tx.store(drop_tx, std::memory_order_relaxed);
+
+    gtpd_encap_update(cookie_, ok, drop_rx, drop_tx);
 
     return 0;
 }
@@ -429,13 +429,19 @@ int GtpuPipe::do_decap() {
     }
     state->mmsg_offset = mmsg_end_offset;
 
+    auto bump_counter = [] (std::atomic<uint64_t> &cnt, auto inc) -> uint64_t {
+        auto v = cnt.load(std::memory_order_relaxed);
+        cnt.store(v += inc, std::memory_order_relaxed);
+        return v;
+    };
+
     gtpd_decap_update(
         cookie_,
-        state->ok += tx,
-        state->drop_rx += drop_rx,
-        state->drop_tx += drop_tx,
-        state->bad += bad,
-        state->trunc += trunc
+        bump_counter(state->ok, tx),
+        bump_counter(state->drop_rx, drop_rx),
+        bump_counter(state->drop_tx, drop_tx),
+        bump_counter(state->bad, bad),
+        bump_counter(state->trunc, trunc)
     );
 
     return 0;
@@ -456,7 +462,7 @@ void GtpuPipe::on_tunnel_updated() {
 }
 
 void GtpuPipe::on_inner_proto_updated() {
-    encap_state->bpf_state->inner_proto = uint16_t(inner_proto_);
+    encap_state->bpf_state->inner_proto.store(uint16_t(inner_proto_), std::memory_order_relaxed);
 }
 
 Fd GtpuPipe::xdp_bpf_prog(const Fd &xdp_sock, const BpfState &state) {
@@ -531,27 +537,27 @@ int GtpuPipe::trap_on_halt = 0;
 #endif
 
 uint64_t GtpuPipe::encap_ok() const {
-    return encap_state->ok;
+    return encap_state->ok.load(std::memory_order_relaxed);
 }
 uint64_t GtpuPipe::encap_drop_rx() const {
-    return encap_state->drop_rx;
+    return encap_state->drop_rx.load(std::memory_order_relaxed);
 }
 uint64_t GtpuPipe::encap_drop_tx() const {
-    return encap_state->drop_tx;
+    return encap_state->drop_tx.load(std::memory_order_relaxed);
 }
 
 uint64_t GtpuPipe::decap_ok() const {
-    return decap_state->ok;
+    return decap_state->ok.load(std::memory_order_relaxed);
 }
 uint64_t GtpuPipe::decap_drop_rx() const {
-    return decap_state->drop_rx;
+    return decap_state->drop_rx.load(std::memory_order_relaxed);
 }
 uint64_t GtpuPipe::decap_drop_tx() const {
-    return decap_state->drop_tx;
+    return decap_state->drop_tx.load(std::memory_order_relaxed);
 }
 uint64_t GtpuPipe::decap_bad() const {
-    return decap_state->bad;
+    return decap_state->bad.load(std::memory_order_relaxed);
 }
 uint64_t GtpuPipe::decap_trunc() const {
-    return decap_state->trunc;
+    return decap_state->trunc.load(std::memory_order_relaxed);
 }
