@@ -1,10 +1,25 @@
 project(gtpd)
 cmake_minimum_required(VERSION 3.14)
+include(CheckIPOSupported)
 set(CMAKE_CXX_STANDARD 17)
 
 include_directories(. include)
 
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+
+check_ipo_supported(RESULT ipo_supported LANGUAGES CXX)
+function(enable_ipo_if_supported)
+    if(ipo_supported)
+        set_property(
+            TARGET ${ARGV}
+            PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE
+        )
+        set_property(
+            TARGET ${ARGV}
+            PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE
+        )
+    endif()
+endfunction()
 
 add_library(gtpd_common STATIC
     common/api_sock_io.cpp
@@ -15,6 +30,7 @@ add_custom_command(
     DEPENDS gen_version.sh
     COMMAND "${CMAKE_SOURCE_DIR}/gen_version.sh" common/version.cpp
 )
+enable_ipo_if_supported(gtpd_common)
 
 add_executable(gtpd
     gtpd/bpf.cpp
@@ -27,6 +43,7 @@ add_executable(gtpd
     gtpd/xdp.cpp
 )
 target_link_libraries(gtpd gtpd_common pthread systemd)
+enable_ipo_if_supported(gtpd)
 
 # required for the main executable to export symbols (uprobes)
 target_link_options(gtpd PRIVATE -Wl,--export-dynamic)
@@ -37,6 +54,7 @@ add_executable(gtpd_ctl
     gtpd_ctl/main.cpp
 )
 target_link_libraries(gtpd_ctl gtpd_common)
+enable_ipo_if_supported(gtpd_ctl)
 
 # Generate gtpd.bpftrace in the build dir for use with gtpd binary
 # in the build dir.
