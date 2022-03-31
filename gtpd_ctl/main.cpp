@@ -6,7 +6,9 @@
 
 #include "api_client.h"
 #include "cmdline.h"
+#include "common/version.h"
 #include <arpa/inet.h>
+#include <getopt.h>
 #include <linux/if_ether.h>
 #include <linux/if_xdp.h>
 #include <net/if.h>
@@ -90,11 +92,72 @@ struct CmdHandler {
 
 int main(int argc, const char *const *argv) {
 
+    int opt;
+    while ((opt = getopt(argc, const_cast<char * const *>(argv), "hv")) != -1) {
+        switch (opt) {
+        default:
+            return EXIT_FAILURE;
+        case 'v':
+            printf("gtpd_ctl %s\n", version);
+            return EXIT_SUCCESS;
+        case 'h':
+            printf(
+"Usage: %s add ...\n"
+"       %s del ...\n"
+"       %s mod ...\n"
+"       %s ls\n"
+"GTPU daemon control utility.\n"
+"\n"
+"  -h   display this help and exit \n"
+"  -v   display version information and exit\n"
+"\n"
+"Add tunnel\n"
+"%s add [PROPERTY VALUE] ... [cookie COOKIE] dev DEV\n"
+"\n"
+"Prints ID of the new tunnel on success.\n"
+"\n"
+"Properties:\n"
+"   local        IP | IPv6           GTPU tunnel attributes\n"
+"   local-teid   NUMBER\n"
+"   remote       IP | IPv6\n"
+"   remote-teid  NUMBER\n"
+"   type         \"ip\" | \"ipv6\"       inner protocol\n"
+"\n"
+"DEV specifies the network interface for gtpd to claim. This is\n"
+"normally a veth device. ARP should be turned off and the other end's\n"
+"MAC address should be set to 00:00:00:00:00:01.\n"
+"\n"
+"Cookie is useful for tracing. It will appear as-is in events related\n"
+"to the tunnel.\n"
+"\n"
+"GTPD_SESSION_LEADER_PID environment variable specifies the PID of the\n"
+"\"session leader\" (optional). The tunnel is removed automatically\n"
+"when the specified process exits.\n"
+"\n"
+"Delete tunnel\n"
+"%s del ID\n"
+"\n"
+"Modify tunnel\n"
+"%s mod ID set [PROPERTY VALUE] ...\n"
+"\n"
+"See \"add\" command for the list of recognized properties.\n"
+"\n"
+"List tunnels\n"
+"%s ls\n"
+"\n"
+"GTPD_SOCKET environment variable overrides daemon socket path.\n",
+                argv[0], argv[0], argv[0], argv[0],
+                argv[0], argv[0], argv[0], argv[0]
+            );
+            return EXIT_SUCCESS;
+        }
+    }
+
     try {
         const char *sock_path = getenv("GTPD_SOCKET");
         if (!sock_path) sock_path = "/run/gtpd";
 
-        auto cmd = parse_args(argv + 1);
+        auto cmd = parse_args(argv + optind);
         CmdHandler handler(sock_path);
 
         return std::visit(handler, cmd);
