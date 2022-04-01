@@ -1,0 +1,4 @@
+#! /bin/sh
+if [ -d /run/systemd/system ] && [ "$1" = remove ]; then
+    systemctl --system stop 'gtpd.service' >/dev/null || true
+fi

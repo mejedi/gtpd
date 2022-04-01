@@ -45,3 +45,16 @@ A secondary network namespace is attached using `gtpd_ctl add` command.
 The tool must run in the network namespace being configured.  The tool
 opens `gtpd_tap` interface and sends the corresponding file descriptor
 alongside the add tunnel command to the daemon.
+
+## Building
+
+Project uses CMake for building.  Please ensure that `libsystemd-dev`
+is installed.  Follow the following steps to build Debian packages.
+It is assumed that the working directory is the project's source root.
+
+```
+mkdir build
+cd build
+cmake ..
+make package
+```

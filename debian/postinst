@@ -1,0 +1,12 @@
+#! /bin/sh
+if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ] || [ "$1" = "abort-deconfigure" ] || [ "$1" = "abort-remove" ] ; then
+    if [ -d /run/systemd/system ]; then
+        systemctl --system daemon-reload >/dev/null || true
+        if [ -n "$2" ]; then
+            _dh_action=restart
+        else
+            _dh_action=start
+        fi
+        systemctl --system $_dh_action 'gtpd.service' >/dev/null || true
+    fi
+fi

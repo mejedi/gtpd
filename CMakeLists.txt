@@ -3,7 +3,11 @@ cmake_minimum_required(VERSION 3.14)
 include(CheckIPOSupported)
 set(CMAKE_CXX_STANDARD 17)
 
-include_directories(. include)
+# build RelWithDebInfo by default; this is convenient for someone
+# wishing to just build deb packages
+if("${CMAKE_BUILD_TYPE}" STREQUAL "")
+    set(CMAKE_BUILD_TYPE RelWithDebInfo)
+endif()
 
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 
@@ -21,13 +25,14 @@ function(enable_ipo_if_supported)
     endif()
 endfunction()
 
+include_directories(. include)
+
 add_library(gtpd_common STATIC
     common/api_sock_io.cpp
     common/version.cpp
 )
 add_custom_command(
     OUTPUT common/version.cpp hack_missing_file_to_make_it_run_every_build
-    DEPENDS gen_version.sh
     COMMAND "${CMAKE_SOURCE_DIR}/gen_version.sh" common/version.cpp
 )
 enable_ipo_if_supported(gtpd_common)
@@ -65,3 +70,24 @@ add_custom_command(
                 "${CMAKE_CURRENT_SOURCE_DIR}/gtpd.bpftrace"
                 > gtpd.bpftrace
 )
+
+install(TARGETS gtpd gtpd_ctl
+        DESTINATION /usr/bin
+        COMPONENT gtpd)
+
+install(FILES systemd/gtpd.service systemd/gtpd.socket
+        DESTINATION /lib/systemd/system
+        COMPONENT gtpd)
+
+install(FILES systemd/gtpd.conf
+        DESTINATION /etc
+        COMPONENT gtpd)
+
+install(DIRECTORY include/gtpd
+        TYPE INCLUDE
+        COMPONENT gtpd_dev)
+
+set(CPACK_GENERATOR "DEB")
+configure_file(package.cmake package.cmake @ONLY)
+set(CPACK_PROPERTIES_FILE package.cmake)
+include(CPack)
