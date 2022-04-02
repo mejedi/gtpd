@@ -12,5 +12,7 @@ C="extern const char version[] = \"$REV\";"
 if [ -z "$1" ]; then
     echo "$REV"
 else
-    if [ "$(cat "$1" 2>/dev/null)" != "$C" ]; then echo "$C" > "$1"; fi
+    if [ "$(cat "$1" 2>/dev/null)" != "$C" ]; then
+        mkdir -p "$(dirname "$1")" && echo "$C" > "$1"
+    fi
 fi
