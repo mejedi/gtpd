@@ -343,8 +343,8 @@ static int gtpu_hdr_len(const volatile uint8_t *p, uint32_t len) {
     // Skip extension headers.
     while (ext_type) {
         if (len <= offset) return -1;
-        uint8_t ehdr_len = 4 * p[offset];
-        if (!ehdr_len || offset + ehdr_len <= len) return -1;
+        uint32_t ehdr_len = 4 * p[offset];
+        if (!ehdr_len || len < offset + ehdr_len) return -1;
         offset += ehdr_len;
         ext_type = p[offset - 1];
     }
