@@ -25,27 +25,27 @@ function(enable_ipo_if_supported)
     endif()
 endfunction()
 
-include_directories(. include)
+include_directories(include src)
 
 add_library(gtpd_common STATIC
-    common/api_sock_io.cpp
-    common/version.cpp
+    src/common/api_sock_io.cpp
+    src/common/version.cpp
 )
 add_custom_command(
-    OUTPUT common/version.cpp hack_missing_file_to_make_it_run_every_build
-    COMMAND "${CMAKE_SOURCE_DIR}/gen_version.sh" common/version.cpp
+    OUTPUT src/common/version.cpp hack_missing_file_to_make_it_run_every_build
+    COMMAND "${CMAKE_SOURCE_DIR}/gen_version.sh" src/common/version.cpp
 )
 enable_ipo_if_supported(gtpd_common)
 
 add_executable(gtpd
-    gtpd/bpf.cpp
-    gtpd/epoll.cpp
-    gtpd/gtpd.cpp
-    gtpd/gtpd_core.cpp
-    gtpd/gtpu_pipe.cpp
-    gtpd/gtpu_tunnel.cpp
-    gtpd/main.cpp
-    gtpd/xdp.cpp
+    src/gtpd/bpf.cpp
+    src/gtpd/epoll.cpp
+    src/gtpd/gtpd.cpp
+    src/gtpd/gtpd_core.cpp
+    src/gtpd/gtpu_pipe.cpp
+    src/gtpd/gtpu_tunnel.cpp
+    src/gtpd/main.cpp
+    src/gtpd/xdp.cpp
 )
 target_link_libraries(gtpd gtpd_common pthread systemd)
 enable_ipo_if_supported(gtpd)
@@ -54,9 +54,9 @@ enable_ipo_if_supported(gtpd)
 target_link_options(gtpd PRIVATE -Wl,--export-dynamic)
 
 add_executable(gtpd_ctl 
-    gtpd_ctl/api_client.cpp
-    gtpd_ctl/cmdline.cpp
-    gtpd_ctl/main.cpp
+    src/gtpd_ctl/api_client.cpp
+    src/gtpd_ctl/cmdline.cpp
+    src/gtpd_ctl/main.cpp
 )
 target_link_libraries(gtpd_ctl gtpd_common)
 enable_ipo_if_supported(gtpd_ctl)
