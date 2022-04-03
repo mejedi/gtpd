@@ -2,29 +2,21 @@
 #include "bpf.h"
 #include "bpf_insn.h"
 #include "gtpu.h"
+#include "uprobe.h"
 #include <linux/if_ether.h>
 #include <system_error>
 #include <sys/mman.h>
 
-// uprobes
-#pragma GCC visibility push(default)
-extern "C" {
+// Encap counters were updated.
+UPROBE(gtpd_encap_update,
+       Cookie cookie, uint64_t encap_ok,
+       uint64_t encap_drop_rx, uint64_t encap_drop_tx)
 
-__attribute__((noinline, noclone)) void
-gtpd_encap_update(Cookie cookie, uint64_t encap_ok,
-                  uint64_t encap_drop_rx, uint64_t encap_drop_tx) {
-    asm volatile ("");
-}
-
-__attribute__((noinline, noclone)) void
-gtpd_decap_update(Cookie cookie, uint64_t decap_ok,
-                  uint64_t decap_drop_rx, uint64_t decap_drop_tx,
-                  uint64_t decap_bad, uint64_t decap_trunc) {
-    asm volatile ("");
-}
-
-}
-#pragma GCC visibility pop
+// Decap counters were updated.
+UPROBE(gtpd_decap_update,
+       Cookie cookie, uint64_t decap_ok,
+       uint64_t decap_drop_rx, uint64_t decap_drop_tx,
+       uint64_t decap_bad, uint64_t decap_trunc)
 
 // Derive from CacheLineAligned to ensure that dynamically-allocated
 // instances are cache line-aligned.
