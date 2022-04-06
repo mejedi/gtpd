@@ -39,6 +39,7 @@ enable_ipo_if_supported(gtpd_common)
 
 add_executable(gtpd
     src/gtpd/bpf.cpp
+    src/gtpd/cache_line_aligned.cpp
     src/gtpd/epoll.cpp
     src/gtpd/gtpd.cpp
     src/gtpd/gtpd_core.cpp

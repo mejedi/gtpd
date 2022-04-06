@@ -3,6 +3,7 @@
 #include "bpf_insn.h"
 #include "gtpu.h"
 #include "uprobe.h"
+#include "cache_line_aligned.h"
 #include <linux/if_ether.h>
 #include <system_error>
 #include <sys/mman.h>
@@ -17,23 +18,6 @@ UPROBE(gtpd_decap_update,
        Cookie cookie, uint64_t decap_ok,
        uint64_t decap_drop_rx, uint64_t decap_drop_tx,
        uint64_t decap_bad, uint64_t decap_trunc)
-
-// Derive from CacheLineAligned to ensure that dynamically-allocated
-// instances are cache line-aligned.
-struct CacheLineAligned {
-    static void* operator new(std::size_t size) {
-        void *p;
-        if (posix_memalign(&p, cache_line_size, size) != 0) {
-            throw std::bad_alloc();
-        }
-        return p;
-    }
-
-    static void operator delete(void* p) noexcept { free(p); }
-
-    static const size_t cache_line_size;
-};
-const size_t CacheLineAligned::cache_line_size = sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
 
 #ifndef BPF_F_MMAPABLE
 #define BPF_F_MMAPABLE (1U << 10)
@@ -54,7 +38,7 @@ GtpuPipe::BpfState::BpfState(): fd(bpf_create_map(
 // is separated from the rest of GtpuPipe bits in a cache line-aligned
 // allocation to avoid false sharing.
 // Pre-allocate and init objects used by sendmmsg() call (NET output).
-struct GtpuPipe::EncapState: CacheLineAligned {
+struct GtpuPipe::EncapState: CacheLineAligned<GtpuPipe::EncapState> {
     XdpRxRing rx;
     XdpUmemFillRing umem_fill;
     std::vector<mmsghdr> mmsg; // batch_size
@@ -120,7 +104,7 @@ struct GtpuPipe::EncapState: CacheLineAligned {
 // larger, up to the batch_size.
 // The number of frames in mmsg is 2x the batch size.  The second half
 // uses a dummy buffer.  Recieving into a dummy buffer discards input.
-struct GtpuPipe::DecapState: CacheLineAligned {
+struct GtpuPipe::DecapState: CacheLineAligned<GtpuPipe::DecapState> {
     XdpTxRing tx;
     XdpUmemCompletionRing umem_completion;
     uint32_t mmsg_offset;
