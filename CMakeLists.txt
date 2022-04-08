@@ -46,6 +46,7 @@ add_executable(gtpd
     src/gtpd/gtpu_pipe.cpp
     src/gtpd/gtpu_tunnel.cpp
     src/gtpd/main.cpp
+    src/gtpd/lb_sampler.cpp
     src/gtpd/xdp.cpp
 )
 target_link_libraries(gtpd gtpd_common pthread systemd)
