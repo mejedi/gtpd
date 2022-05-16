@@ -86,10 +86,11 @@ GtpdCore::WatcherInfo decode(GtpdCore::WatcherInfo, epoll_data_t data) {
     };
 }
 
-std::pair<GtpuTunnelId, Fd>
+GtpuTunnelId
 GtpdCore::create_tunnel(GtpuTunnel tunnel, InnerProto inner_proto,
                         Fd xdp_sock,
-                        Fd session_leader_pidfd) {
+                        Fd session_leader_pidfd,
+                        GtpuPipe::BpfState bpf_state) {
 
     // Find spare id
     assert(!sessions.empty());
@@ -100,9 +101,6 @@ GtpdCore::create_tunnel(GtpuTunnel tunnel, InnerProto inner_proto,
 
     const AF address_family = tunnel.address_family();
     ensure_address_family_enabled(address_family);
-
-    GtpuPipe::BpfState bpf_state;
-    Fd xdp_bpf_prog = GtpuPipe::xdp_bpf_prog(xdp_sock, bpf_state);
 
     auto p = std::make_unique<Session>(GtpuTunnelId(id),
                                        tunnel,
@@ -147,7 +145,7 @@ GtpdCore::create_tunnel(GtpuTunnel tunnel, InnerProto inner_proto,
     // Otherwise register_tunnel() might attempt to double register.
     sessions[id] = std::move(p);
 
-    return { GtpuTunnelId(id), std::move(xdp_bpf_prog) };
+    return GtpuTunnelId(id);
 }
 
 void GtpdCore::delete_tunnel(GtpuTunnelId id) {

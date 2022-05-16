@@ -20,9 +20,10 @@ public:
         virtual void unregister_session_leader(GtpuTunnelId, const Fd &) = 0;
     };
 
-    std::pair<GtpuTunnelId, Fd> create_tunnel(GtpuTunnel, InnerProto,
-                                              Fd xdp_sock,
-                                              Fd session_leader_pidfd);
+    GtpuTunnelId create_tunnel(GtpuTunnel, InnerProto,
+                               Fd xdp_sock,
+                               Fd session_leader_pidfd,
+                               GtpuPipe::BpfState);
     void delete_tunnel(GtpuTunnelId);
     void modify_tunnel(GtpuTunnelId, GtpuTunnel, InnerProto);
     GtpuTunnelId next_tunnel(GtpuTunnelId);

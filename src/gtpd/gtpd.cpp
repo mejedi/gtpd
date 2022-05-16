@@ -357,13 +357,20 @@ void Gtpd::api_client_serve(ApiClient *client) {
                     resp.rc = -EINVAL;
                     break;
                 }
-                GtpuTunnelId id;
-                std::tie(id, client->outmsg_fd) = core.create_tunnel(
+                Fd &xdp_sock = client->inmsg_fds[0];
+
+                GtpuPipe::BpfState bpf_state;
+                Fd xdp_bpf_prog = GtpuPipe::xdp_bpf_prog(xdp_sock, bpf_state);
+
+                GtpuTunnelId id = core.create_tunnel(
                     GtpuTunnel(msg.tunnel), InnerProto(msg.inner_proto),
-                    std::move(client->inmsg_fds[0]),
-                    std::move(client->inmsg_fds[1])
+                    std::move(xdp_sock),
+                    std::move(client->inmsg_fds[1]),
+                    std::move(bpf_state)
                 );
+
                 resp.rc = uint32_t(id);
+                client->outmsg_fd = std::move(xdp_bpf_prog);
             }
             break;
         case API_DELETE_GTPU_TUNNEL_CODE: {
