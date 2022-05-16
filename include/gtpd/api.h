@@ -42,7 +42,6 @@ struct ApiCreateGtpuTunnelMsg {
     ApiGtpuTunnel tunnel;
     uint32_t inner_proto; // htons(ETH_P_IP) (htons(0x0800)),
                           // htons(ETH_P_IPV6) (htons(0x86dd))
-    uint32_t cookie;
 };
 // Response: ApiResponseMsg (+ XDP BPF prog FD in SCM_RIGHTS)
 
@@ -92,8 +91,6 @@ struct ApiGtpuTunnelListItemMsg {
     // corresponding XDP socket's memory-mapped io interfaces.  When
     // an inconsictency is detected, the tunnel gets halted.
     uint32_t halt;
-
-    uint32_t cookie;
 
     uint64_t encap_ok;
     uint64_t encap_drop_rx;

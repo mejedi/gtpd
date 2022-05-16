@@ -112,7 +112,7 @@ int main(int argc, const char *const *argv) {
 "  -v   display version information and exit\n"
 "\n"
 "Add tunnel\n"
-"%s add [PROPERTY VALUE] ... [cookie COOKIE] dev DEV\n"
+"%s add [PROPERTY VALUE] ... dev DEV\n"
 "\n"
 "Prints ID of the new tunnel on success.\n"
 "\n"
@@ -126,9 +126,6 @@ int main(int argc, const char *const *argv) {
 "DEV specifies the network interface for gtpd to claim. This is\n"
 "normally a veth device. ARP should be turned off and the other end's\n"
 "MAC address should be set to 00:00:00:00:00:01.\n"
-"\n"
-"Cookie is useful for tracing. It will appear as-is in events related\n"
-"to the tunnel.\n"
 "\n"
 "GTPD_SESSION_LEADER_PID environment variable specifies the PID of the\n"
 "\"session leader\" (optional). The tunnel is removed automatically\n"
@@ -178,7 +175,6 @@ union Columns {
         int remote_teid;
         int type;
         int halt;
-        int cookie;
         int encap_ok;
         int encap_drop_rx;
         int encap_drop_tx;
@@ -194,7 +190,7 @@ static int fmt_header(std::vector<char> &buf, const Columns &cols) {
     return snprintf(
         &buf[0], buf.size(),
         "%*s  %*s  %*s  %*s  %*s  %*s  %*s  %*s  %*s  %*s  %*s  %*s  "
-        "%*s  %*s  %*s  %*s\n",
+        "%*s  %*s  %*s\n",
         cols.id, "id",
         cols.local, "local",
         cols.local_teid, "local-teid",
@@ -202,7 +198,6 @@ static int fmt_header(std::vector<char> &buf, const Columns &cols) {
         cols.remote_teid, "remote-teid",
         cols.type, "type",
         cols.halt, "halt",
-        cols.cookie, "cookie",
         cols.encap_ok, "encap-ok",
         cols.encap_drop_rx, "encap-drop-rx",
         cols.encap_drop_tx, "encap-drop-tx",
@@ -235,7 +230,7 @@ static int fmt_row(std::vector<char> &buf, const ApiGtpuTunnelListItemMsg &sess,
 
     return snprintf(
         &buf[0], buf.size(),
-        "%*u  %*s  %*u  %*s  %*u  %*s  %*d  %*u  %*lu  %*lu  %*lu  %*lu  "
+        "%*u  %*s  %*u  %*s  %*u  %*s  %*d  %*lu  %*lu  %*lu  %*lu  "
         "%*lu  %*lu  %*lu  %*lu\n",
         cols.id, sess.id,
         cols.local, inet_ntop(
@@ -252,7 +247,6 @@ static int fmt_row(std::vector<char> &buf, const ApiGtpuTunnelListItemMsg &sess,
         cols.remote_teid, ntohl(sess.tunnel.remote_teid),
         cols.type, type,
         cols.halt, sess.halt,
-        cols.cookie, sess.cookie,
         cols.encap_ok, sess.encap_ok,
         cols.encap_drop_rx, sess.encap_drop_rx,
         cols.encap_drop_tx, sess.encap_drop_tx,

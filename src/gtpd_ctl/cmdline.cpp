@@ -188,8 +188,6 @@ parse_create_gtpu_tunnel_cmd(CmdLineSeg s) {
     GtpuTunnelParser tun_parser(&cmd.msg.tunnel);
     InnerProtoParser inner_proto_parser(&cmd.msg.inner_proto);
 
-    bool cookie_set = false;
-
     while (s) {
         if (tun_parser.consume(&s)) continue;
         if (inner_proto_parser.consume(&s)) continue;
@@ -197,13 +195,6 @@ parse_create_gtpu_tunnel_cmd(CmdLineSeg s) {
             s.advance();
             if (cmd.if_name) s.err(err_duplicate_argument);
             cmd.if_name = s.current().data();
-            s = s.next();
-            continue;
-        }
-        if (s.current() == "cookie") {
-            s.advance();
-            if (cookie_set) s.err(err_duplicate_argument);
-            cmd.msg.cookie = s.parse_u32();
             s = s.next();
             continue;
         }

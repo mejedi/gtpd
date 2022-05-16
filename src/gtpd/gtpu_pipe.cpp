@@ -9,12 +9,12 @@
 
 // Encap counters were updated.
 UPROBE(gtpd_encap_update,
-       Cookie cookie, uint64_t encap_ok,
+       GtpuTunnelId id, uint64_t encap_ok,
        uint64_t encap_drop_rx, uint64_t encap_drop_tx)
 
 // Decap counters were updated.
 UPROBE(gtpd_decap_update,
-       Cookie cookie, uint64_t decap_ok,
+       GtpuTunnelId id, uint64_t decap_ok,
        uint64_t decap_drop_rx, uint64_t decap_drop_tx,
        uint64_t decap_bad, uint64_t decap_trunc)
 
@@ -181,22 +181,21 @@ struct GtpuPipe::DecapState: CacheLineAligned {
 };
 
 GtpuPipe::GtpuPipe(const GtpuTunnel &tunnel, Fd net_sock, Fd xdp_sock,
-                   InnerProto inner_proto, Cookie cookie,
+                   InnerProto inner_proto,
                    const Options &opts,
                    BpfState bpf_state)
-    : GtpuPipe(tunnel, net_sock, xdp_sock, inner_proto, cookie, opts,
+    : GtpuPipe(tunnel, net_sock, xdp_sock, inner_proto, opts,
                XdpRing::mmap_offsets(xdp_sock),
                std::move(bpf_state)) {}
 
 GtpuPipe::GtpuPipe(const GtpuTunnel &tunnel, Fd &net_sock, Fd &xdp_sock,
-                   InnerProto inner_proto, Cookie cookie,
+                   InnerProto inner_proto,
                    const Options &opts,
                    xdp_mmap_offsets mmap_offsets,
                    BpfState bpf_state)
     : tunnel_(tunnel),
       xdp_sock_(std::move(xdp_sock)),
       inner_proto_(inner_proto),
-      cookie_(cookie),
       batch_size(opts.batch_size),
       xdp_umem(xdp_sock_, opts.xdp_pool_size, opts.encap_mtu),
       encap_state(std::make_unique<EncapState>(xdp_sock_, opts, mmap_offsets,
@@ -242,7 +241,7 @@ void GtpuPipe::set_net_sock(Fd net_sock) {
 // something seriously wrong with the session.  It's unsafe to serve it
 // any further as the socket is most likely still ready and we'll
 // busy-loop forever.
-int GtpuPipe::do_encap() {
+int GtpuPipe::do_encap(GtpuTunnelId id) {
     auto *state = encap_state.get();
 #ifdef NDEBUG
 #define HALT __LINE__
@@ -309,7 +308,7 @@ int GtpuPipe::do_encap() {
     state->drop_rx.store(drop_rx, std::memory_order_relaxed);
     state->drop_tx.store(drop_tx, std::memory_order_relaxed);
 
-    gtpd_encap_update(cookie_, ok, drop_rx, drop_tx);
+    gtpd_encap_update(id, ok, drop_rx, drop_tx);
 
     return 0;
 }
@@ -344,7 +343,7 @@ static int gtpu_hdr_len(const volatile uint8_t *p, uint32_t len) {
     return offset;
 }
 
-int GtpuPipe::do_decap() {
+int GtpuPipe::do_decap(GtpuTunnelId id) {
     auto *state = decap_state.get();
 
     // Re-fill buffers from completion ring (initially empty)
@@ -428,7 +427,7 @@ int GtpuPipe::do_decap() {
     };
 
     gtpd_decap_update(
-        cookie_,
+        id,
         bump_counter(state->ok, tx),
         bump_counter(state->drop_rx, drop_rx),
         bump_counter(state->drop_tx, drop_tx),

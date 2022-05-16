@@ -9,9 +9,6 @@
 #include <signal.h>
 #include <vector>
 
-// Opaque integer id; zero is invalid.
-enum class GtpuTunnelId: uint32_t {};
-
 class GtpdCore {
 public:
     struct Delegate {
@@ -24,7 +21,7 @@ public:
     };
 
     std::pair<GtpuTunnelId, Fd> create_tunnel(GtpuTunnel, InnerProto,
-                                              Cookie, Fd xdp_sock,
+                                              Fd xdp_sock,
                                               Fd session_leader_pidfd);
     void delete_tunnel(GtpuTunnelId);
     void modify_tunnel(GtpuTunnelId, GtpuTunnel, InnerProto);

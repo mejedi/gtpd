@@ -8,8 +8,8 @@
 // socket.  Common values include htons(ETH_P_IP) and htons(ETH_P_IPV6).
 enum class InnerProto: uint16_t {};
 
-// Opaque integer id.
-enum class Cookie: uint32_t {};
+// Opaque integer id; zero is invalid.
+enum class GtpuTunnelId: uint32_t {};
 
 // Receives on XDP socket, GTPU encapsulates, and sends on NET (UDP)
 // socket.  Also receives on NET, decapsulates, and sends on XDP.
@@ -46,7 +46,7 @@ public:
     }
 
     GtpuPipe(const GtpuTunnel &tunnel, Fd net_sock, Fd xdp_sock,
-             InnerProto inner_proto, Cookie cookie,
+             InnerProto inner_proto,
              const Options &opts,
              BpfState bpf_state);
 
@@ -69,12 +69,9 @@ public:
         on_inner_proto_updated();
     }
 
-    int do_encap();
+    int do_encap(GtpuTunnelId id);
 
-    int do_decap();
-
-    // Used to identify tunnels in uprobes.
-    Cookie cookie() const { return cookie_; }
+    int do_decap(GtpuTunnelId id);
 
     // Counters.
     uint64_t encap_ok() const;
@@ -94,7 +91,6 @@ private:
     GtpuTunnel tunnel_;
     Fd net_sock_, xdp_sock_;
     InnerProto inner_proto_;
-    const Cookie cookie_;
     const uint32_t batch_size;
 
     XdpUmem xdp_umem;
@@ -104,7 +100,7 @@ private:
 
 private:
     GtpuPipe(const GtpuTunnel &tunnel, Fd &net_sock, Fd &xdp_sock,
-             InnerProto inner_proto, Cookie cookie,
+             InnerProto inner_proto,
              const Options &opts,
              xdp_mmap_offsets mmap_ofsets,
              BpfState bpf_state);
@@ -117,4 +113,3 @@ private:
     static int trap_on_halt;
 #endif
 };
-

@@ -330,7 +330,6 @@ static void encode_next_tunnel(GtpdCore &core, GtpuTunnelId id, ApiMsg *dest) {
         list_item.tunnel = pipe.tunnel().api_gtpu_tunnel();
         list_item.inner_proto = uint32_t(pipe.inner_proto());
         list_item.halt = core.halt_code(id);
-        list_item.cookie = uint32_t(pipe.cookie());
         list_item.encap_ok = pipe.encap_ok();
         list_item.encap_drop_rx = pipe.encap_drop_rx();
         list_item.encap_drop_tx = pipe.encap_drop_tx();
@@ -361,7 +360,6 @@ void Gtpd::api_client_serve(ApiClient *client) {
                 GtpuTunnelId id;
                 std::tie(id, client->outmsg_fd) = core.create_tunnel(
                     GtpuTunnel(msg.tunnel), InnerProto(msg.inner_proto),
-                    Cookie(msg.cookie),
                     std::move(client->inmsg_fds[0]),
                     std::move(client->inmsg_fds[1])
                 );

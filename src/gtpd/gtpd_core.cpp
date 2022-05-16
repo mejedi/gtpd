@@ -35,6 +35,7 @@ struct GtpdCore::Worker {
 };
 
 struct GtpdCore::Session {
+    const GtpuTunnelId id;
     std::atomic_int halt = 0;
     int encap_worker_index = -1;
     int decap_worker_index = -1;
@@ -42,13 +43,14 @@ struct GtpdCore::Session {
     Fd session_leader_pidfd;
     GtpuPipe pipe;
 
-    explicit Session(const GtpuTunnel &tun, Fd net_sock, Fd xdp_sock,
-                     InnerProto inner_proto,
-                     Cookie cookie,
-                     const GtpdCore::Options &opts,
-                     GtpuPipe::BpfState bpf_state):
+    Session(GtpuTunnelId id,
+            const GtpuTunnel &tun, Fd net_sock, Fd xdp_sock,
+            InnerProto inner_proto,
+            const GtpdCore::Options &opts,
+            GtpuPipe::BpfState bpf_state):
+        id(id),
         net_sock_reg(net_sock),
-        pipe(tun, std::move(net_sock), std::move(xdp_sock), inner_proto, cookie, opts,
+        pipe(tun, std::move(net_sock), std::move(xdp_sock), inner_proto, opts,
              std::move(bpf_state)) {}
 
     EpollWatcherInfo<WatcherInfo> net_sock_watcher();
@@ -86,7 +88,7 @@ GtpdCore::WatcherInfo decode(GtpdCore::WatcherInfo, epoll_data_t data) {
 
 std::pair<GtpuTunnelId, Fd>
 GtpdCore::create_tunnel(GtpuTunnel tunnel, InnerProto inner_proto,
-                        Cookie cookie, Fd xdp_sock,
+                        Fd xdp_sock,
                         Fd session_leader_pidfd) {
 
     // Find spare id
@@ -102,11 +104,11 @@ GtpdCore::create_tunnel(GtpuTunnel tunnel, InnerProto inner_proto,
     GtpuPipe::BpfState bpf_state;
     Fd xdp_bpf_prog = GtpuPipe::xdp_bpf_prog(xdp_sock, bpf_state);
 
-    auto p = std::make_unique<Session>(tunnel,
+    auto p = std::make_unique<Session>(GtpuTunnelId(id),
+                                       tunnel,
                                        gtpu_socket(address_family),
                                        std::move(xdp_sock),
                                        inner_proto,
-                                       cookie,
                                        options,
                                        std::move(bpf_state));
 
@@ -300,14 +302,14 @@ void GtpdCore::worker_proc(Worker &w) {
                 // session.  It's unsafe to serve it any further as
                 // the socket is most likely still ready and we'll
                 // busy-loop forever.
-                if (int halt = info.sess->pipe.do_decap()) {
+                if (int halt = info.sess->pipe.do_decap(info.sess->id)) {
                     info.sess->halt.store(halt, std::memory_order_relaxed);
                     w.epoll.modify_watcher_if_exists(info.sess->net_sock_watcher().disable());
                 }
                 break;
             case WatcherType::XDP_SOCK:
                 // See above.
-                if (int halt = info.sess->pipe.do_encap()) {
+                if (int halt = info.sess->pipe.do_encap(info.sess->id)) {
                     info.sess->halt.store(halt, std::memory_order_relaxed);
                     w.epoll.modify_watcher_if_exists(info.sess->xdp_sock_watcher().disable());
                 }
