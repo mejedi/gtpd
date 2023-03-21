@@ -43,7 +43,7 @@ The listening socket is bound at `/run/gtpd`.
 
 A secondary network namespace is attached using `gtpd_ctl add` command, e.g:
 ```
-gtpd_ctl add local 192.168.0.7 remote 192.168.0.11 dev gtpd_tap
+gtpd_ctl add local 10.99.100.91 remote 10.99.100.90 dev gtpd_tap
 ```
 The tool opens `gtpd_tap` interface and sends the corresponding file descriptor
 alongside the add tunnel command to the daemon.
@@ -69,4 +69,30 @@ mkdir build
 cd build
 cmake ..
 make package
+```
+
+The package provides `gtpd` daemon, `systemd` unit files and `gtpd_ctl` utility.
+
+## Usage
+### Add a tunnel
+```sh
+$ gtpd_ctl add local 10.99.100.91 local-teid 19909 remote 10.99.100.90 remote-teid 19909 dev eth0
+1
+```
+
+### List tunnels
+```sh
+$ gtpd_ctl ls
+# id         local  local-teid        remote  remote-teid  type  halt  encap-ok  encap-drop-rx  encap-drop-tx  decap-ok  decap-drop-rx  decap-drop-tx  decap-bad  decap-trunc
+   1  10.99.100.91       19909  10.99.100.90        19909    ip     0         0              0              0         0              0              0          0            0
+```
+### Modify a tunnel
+```sh
+$ gtpd_ctl mod 1 set local-teid 1234
+```
+One can optionally include `set local`, `set remote` and `set remote-teid` as well.
+
+### Remove a tunnel
+```sh
+$ gtpd_ctl del 1
 ```
