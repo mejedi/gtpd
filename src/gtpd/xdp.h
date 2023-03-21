@@ -5,6 +5,7 @@
 #include "common/fd.h"
 #include <atomic>
 #include <cassert>
+#include <cstddef>
 #include <linux/if_xdp.h>
 #include <type_traits>
 

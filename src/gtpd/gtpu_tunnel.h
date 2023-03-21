@@ -4,6 +4,8 @@
 #include <arpa/inet.h>
 #include <cassert>
 #include <memory>
+#include <string_view>
+#include <limits>
 
 enum class AddressFamily { INET = AF_INET, INET6 = AF_INET6 };
 using AF = AddressFamily;

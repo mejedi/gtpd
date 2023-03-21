@@ -2,6 +2,7 @@
 #include "common/fd.h"
 #include "common/api_sock_io.h"
 #include "gtpd/api.h"
+#include <string_view>
 
 struct ApiClient {
     ApiClient(std::string_view path);

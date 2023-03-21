@@ -7,6 +7,7 @@
 #include <system_error>
 #include <tuple>
 #include <optional>
+#include <limits>
 
 namespace {
 

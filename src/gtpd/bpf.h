@@ -1,6 +1,7 @@
 #pragma once
 #include "common/fd.h"
 #include <linux/bpf.h>
+#include <cstdint>
 
 Fd bpf_create_map(enum bpf_map_type map_type,
                   unsigned key_size,

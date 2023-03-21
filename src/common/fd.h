@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstring>
 #include <unistd.h>
+#include <cerrno>
 
 // File descriptor handle with the semantics similar to std::unique_ptr.
 class Fd {

@@ -1,5 +1,6 @@
 #include "api_sock_io.h"
 #include <cassert>
+#include <cstdint>
 #include <sys/socket.h>
 #include <sys/un.h>
 
