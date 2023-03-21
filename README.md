@@ -41,10 +41,22 @@ We emulate TAP devices with virtual Ethernet pairs for better performance.
 The daemon receives commands via a UNIX domain socket connection.
 The listening socket is bound at `/run/gtpd`.
 
-A secondary network namespace is attached using `gtpd_ctl add` command.
-The tool must run in the network namespace being configured.  The tool
-opens `gtpd_tap` interface and sends the corresponding file descriptor
+A secondary network namespace is attached using `gtpd_ctl add` command, e.g:
+```
+gtpd_ctl add local 192.168.0.7 remote 192.168.0.11 dev gtpd_tap
+```
+The tool opens `gtpd_tap` interface and sends the corresponding file descriptor
 alongside the add tunnel command to the daemon.
+The tool must run in the network namespace `gtpd_tap` belongs to.
+
+One can have both `gtpd_tap` and `eth0` in the secondary network namespace.
+A more common config with a veth pair spanning namespaces is also working.
+
+Note: veth pair needs some twidling with as `gtpd` doesn't implement ARP.
+See `test_env.sh` for details. A short human-readable summary:
+  * turn ARP off on both ends;
+  * set the MAC address to `00:00:00:00:00:01`;
+  * disable RX checksum offloading.
 
 ## Building
 
