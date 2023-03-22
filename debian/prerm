@@ -1,4 +1,5 @@
 #! /bin/sh
 if [ -d /run/systemd/system ] && [ "$1" = remove ]; then
-    systemctl --system stop 'gtpd.service' >/dev/null || true
+    systemctl --system stop 'gtpd.socket' >/dev/null || true
+    systemctl --system disable 'gtpd.socket' >/dev/null || true
 fi

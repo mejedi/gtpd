@@ -17,6 +17,3 @@ AmbientCapabilities=cap_net_admin 38 39
 
 ; XDP umem counts against the limit
 LimitMEMLOCK=128M
-
-[Install]
-WantedBy=default.target
