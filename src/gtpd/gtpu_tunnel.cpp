@@ -204,7 +204,10 @@ static Fd gtpu_reuseport_prog(AF address_family,
         break;
     }
 
-    enum { L_Drop, L_UseSockArrayDefault, L_FetchFromSockArray, LabelCount };
+    enum {
+        L_Drop, L_DoGtpuHeader, L_UseSockArrayDefault, L_FetchFromSockArray,
+        L_NonLinear, LabelCount
+    };
     int labels[LabelCount];
 
     bpf_insn prog[] = {
@@ -220,9 +223,12 @@ static Fd gtpu_reuseport_prog(AF address_family,
         BPF_LDX_MEM(BPF_DW, BPF_REG_3, BPF_REG_CTX, offsetof(sk_reuseport_md, data_end)),
         BPF_MOV64_REG(BPF_REG_4, BPF_REG_2),
         BPF_ALU64_IMM(BPF_ADD, BPF_REG_4, sizeof(udphdr) + 8),
-        BPF_JMP_REG(BPF_JGT, BPF_REG_4, BPF_REG_3, L_Drop),
+        BPF_JMP_REG(BPF_JGT, BPF_REG_4, BPF_REG_3, L_NonLinear),
 
         //// Check GTPU version and type, don't clobber r1
+        //// Data pointer (r2) could point into the stack and r3, r4
+        //// might be clobbered if we are coming from L_NonLinear
+BPF_LABEL(L_DoGtpuHeader),
         BPF_LDX_MEM(BPF_H, BPF_REG_3, BPF_REG_2, sizeof(udphdr)),
         BPF_ALU32_IMM(BPF_AND, BPF_REG_3,
                       htons(((GTPU_VER_MASK | GTPU_PT_BIT) << 8) | 255)),
@@ -273,7 +279,25 @@ BPF_LABEL(L_Drop),
         //// Use sockarray_default
 BPF_LABEL(L_UseSockArrayDefault),
         BPF_LD_MAP_FD(BPF_REG_ARG2, sockarray_default.get()),
-        BPF_JMP_A(L_FetchFromSockArray)
+        BPF_JMP_A(L_FetchFromSockArray),
+
+        //// Handle non-linear buffer (or a short packet);
+        //// both have (md->data_end - md->data) less than we expect.
+BPF_LABEL(L_NonLinear),
+        // bpf_skb_load_bytes(reuse_md, 0,
+        //                    fp - sizeof(udphdr) - 8, sizeof(udphdr) + 8)
+        BPF_MOV32_IMM(BPF_REG_ARG2, 0),
+            BPF_MOV64_REG(BPF_REG_ARG3, BPF_REG_FP),
+            BPF_ALU64_IMM(BPF_ADD, BPF_REG_ARG3, -int(sizeof(udphdr)) - 8),
+        BPF_MOV32_IMM(BPF_REG_ARG4, int(sizeof(udphdr)) + 8),
+        BPF_EMIT_CALL(BPF_FUNC_skb_load_bytes),
+        BPF_JMP32_IMM(BPF_JNE, BPF_REG_0, 0, L_Drop),
+
+        // Restore things to the state L_DoGtpuHeader expects
+        BPF_MOV64_REG(BPF_REG_ARG1, BPF_REG_CTX),
+        BPF_MOV64_REG(BPF_REG_2, BPF_REG_FP),
+        BPF_ALU64_IMM(BPF_ADD, BPF_REG_ARG2, -int(sizeof(udphdr)) - 8),
+        BPF_JMP_A(L_DoGtpuHeader),
     };
 
     return bpf_prog_load(BPF_PROG_TYPE_SK_REUSEPORT, prog,
